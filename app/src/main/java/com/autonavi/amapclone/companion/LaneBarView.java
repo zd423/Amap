@@ -2,6 +2,7 @@ package com.autonavi.amapclone.companion;
 
 import android.content.Context;
 import android.graphics.Canvas;
+import android.graphics.DashPathEffect;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.RectF;
@@ -10,12 +11,12 @@ import android.view.View;
 import java.util.Arrays;
 
 public class LaneBarView extends View {
-    private static final String LEFT = "\u2190";
-    private static final String STRAIGHT = "\u2191";
-    private static final String RIGHT = "\u2192";
-    private static final String U_LEFT = "\u21b6";
-    private static final String U_RIGHT = "\u21b7";
-    private static final String EXTEND = "\u2506";
+    private static final int STRAIGHT = 1;
+    private static final int LEFT = 2;
+    private static final int RIGHT = 3;
+    private static final int U_LEFT = 4;
+    private static final int U_RIGHT = 5;
+    private static final int EXTEND = 6;
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final RectF rect = new RectF();
@@ -25,7 +26,7 @@ public class LaneBarView extends View {
 
     public LaneBarView(Context context) {
         super(context);
-        setMinimumHeight(dp(54));
+        setMinimumHeight(dp(58));
         setVisibility(GONE);
     }
 
@@ -62,9 +63,7 @@ public class LaneBarView extends View {
     }
 
     public void setFallbackIcon(int icon) {
-        int[] fallback = new int[]{icon, 15, 15, 15};
-        boolean[] selected = new boolean[]{true, true, true, true};
-        setLaneData(fallback, selected);
+        setLaneData(new int[]{icon, 15, 15, 15}, new boolean[]{true, true, true, true});
     }
 
     public void hideLane() {
@@ -74,8 +73,8 @@ public class LaneBarView extends View {
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
         int count = Math.max(3, lanes == null ? 4 : lanes.length);
-        int width = dp(44) * count + dp(14);
-        int height = dp(54);
+        int width = dp(48) * count + dp(12);
+        int height = dp(58);
         setMeasuredDimension(resolveSize(width, widthMeasureSpec), resolveSize(height, heightMeasureSpec));
     }
 
@@ -88,14 +87,14 @@ public class LaneBarView extends View {
 
         rect.set(0, 0, getWidth(), getHeight());
         paint.setStyle(Paint.Style.FILL);
-        paint.setColor(0xF0182A3D);
-        canvas.drawRoundRect(rect, dp(10), dp(10), paint);
+        paint.setColor(0xFF2878F0);
+        canvas.drawRoundRect(rect, dp(12), dp(12), paint);
 
         int count = lanes.length;
         float cell = getWidth() / (float) count;
         for (int i = 0; i < count; i++) {
             if (i > 0) {
-                paint.setColor(0x24FFFFFF);
+                paint.setColor(0x32FFFFFF);
                 paint.setStrokeWidth(dp(1));
                 float x = i * cell;
                 canvas.drawLine(x, dp(8), x, getHeight() - dp(8), paint);
@@ -103,42 +102,95 @@ public class LaneBarView extends View {
             boolean laneRecommended = recommend == null || i >= recommend.length || recommend[i];
             LaneIcon icon = iconForLane(lanes[i]);
             if (laneRecommended && icon.hasEnabled()) {
-                paint.setColor(0x1FFFFFFF);
-                rect.set(cell * i + dp(3), dp(5), cell * (i + 1) - dp(3), getHeight() - dp(5));
-                canvas.drawRoundRect(rect, dp(8), dp(8), paint);
+                paint.setStyle(Paint.Style.FILL);
+                paint.setColor(0x22FFFFFF);
+                rect.set(cell * i + dp(4), dp(5), cell * (i + 1) - dp(4), getHeight() - dp(5));
+                canvas.drawRoundRect(rect, dp(9), dp(9), paint);
             }
             drawLaneIcon(canvas, icon, cell * i, cell, laneRecommended);
         }
     }
 
     private void drawLaneIcon(Canvas canvas, LaneIcon icon, float left, float width, boolean laneRecommended) {
-        String[] labels = icon.labels;
-        boolean[] enabled = icon.enabled;
-        if (labels.length == 0) {
-            return;
-        }
-        if (icon.complex || labels.length > 1) {
-            drawComplexLaneIcon(canvas, icon, left, width, laneRecommended);
-            return;
-        }
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeCap(Paint.Cap.ROUND);
+        paint.setStrokeJoin(Paint.Join.ROUND);
+        paint.setPathEffect(null);
 
-        float textSize = labels.length >= 3 ? dp(18) : dp(25);
-        paint.setTextSize(textSize);
-        paint.setFakeBoldText(true);
-        paint.setTextAlign(Paint.Align.CENTER);
-        Paint.FontMetrics fm = paint.getFontMetrics();
-        float baseline = getHeight() / 2f - (fm.ascent + fm.descent) / 2f;
-        float gap = labels.length >= 3
-                ? Math.min(dp(16), width / (labels.length + 0.6f))
-                : Math.min(dp(15), width / (labels.length + 0.8f));
-        float center = left + width / 2f;
-        float start = center - gap * (labels.length - 1) / 2f;
-        for (int i = 0; i < labels.length; i++) {
-            boolean active = i < enabled.length && enabled[i] && laneRecommended;
-            paint.setColor(active ? 0xFFFFFFFF : 0xFF5F7890);
-            canvas.drawText(labels[i], start + gap * i, baseline, paint);
+        for (int pass = 0; pass < 2; pass++) {
+            boolean drawActive = pass == 1;
+            for (int i = 0; i < icon.directions.length; i++) {
+                boolean active = i < icon.enabled.length && icon.enabled[i] && laneRecommended;
+                if (active != drawActive) {
+                    continue;
+                }
+                paint.setColor(active ? 0xFFFFFFFF : 0x88C7D8F4);
+                paint.setStrokeWidth(active ? dp(5) : dp(4));
+                drawDirection(canvas, icon.directions[i], left, width);
+            }
         }
-        paint.setFakeBoldText(false);
+        paint.setPathEffect(null);
+        paint.setStyle(Paint.Style.FILL);
+    }
+
+    private void drawDirection(Canvas canvas, int direction, float left, float width) {
+        float cx = left + width / 2f;
+        float bottom = getHeight() - dp(10);
+        float splitY = getHeight() - dp(27);
+        float top = dp(9);
+        float leftX = left + Math.max(dp(9), width * 0.20f);
+        float rightX = left + Math.min(width - dp(9), width * 0.80f);
+
+        path.reset();
+        path.moveTo(cx, bottom);
+        if (direction == STRAIGHT) {
+            path.lineTo(cx, top + dp(8));
+            canvas.drawPath(path, paint);
+            drawArrowHead(canvas, cx, top + dp(8), 0f, -1f);
+        } else if (direction == LEFT) {
+            path.lineTo(cx, splitY);
+            path.cubicTo(cx, splitY - dp(11), leftX + dp(9), top + dp(13), leftX, top + dp(11));
+            canvas.drawPath(path, paint);
+            drawArrowHead(canvas, leftX, top + dp(11), -1f, -0.10f);
+        } else if (direction == RIGHT) {
+            path.lineTo(cx, splitY);
+            path.cubicTo(cx, splitY - dp(11), rightX - dp(9), top + dp(13), rightX, top + dp(11));
+            canvas.drawPath(path, paint);
+            drawArrowHead(canvas, rightX, top + dp(11), 1f, -0.10f);
+        } else if (direction == U_LEFT) {
+            path.lineTo(cx, splitY);
+            path.cubicTo(cx, top + dp(6), leftX, top + dp(6), leftX, splitY + dp(9));
+            canvas.drawPath(path, paint);
+            drawArrowHead(canvas, leftX, splitY + dp(9), 0f, 1f);
+        } else if (direction == U_RIGHT) {
+            path.lineTo(cx, splitY);
+            path.cubicTo(cx, top + dp(6), rightX, top + dp(6), rightX, splitY + dp(9));
+            canvas.drawPath(path, paint);
+            drawArrowHead(canvas, rightX, splitY + dp(9), 0f, 1f);
+        } else {
+            paint.setPathEffect(new DashPathEffect(new float[]{dp(4), dp(4)}, 0));
+            path.lineTo(cx, top + dp(8));
+            canvas.drawPath(path, paint);
+            paint.setPathEffect(null);
+        }
+    }
+
+    private void drawArrowHead(Canvas canvas, float x, float y, float dx, float dy) {
+        float size = dp(7);
+        Path arrow = path;
+        arrow.reset();
+        if (Math.abs(dx) > Math.abs(dy)) {
+            arrow.moveTo(x, y);
+            arrow.lineTo(x - dx * size, y - size * 0.72f);
+            arrow.moveTo(x, y);
+            arrow.lineTo(x - dx * size, y + size * 0.72f);
+        } else {
+            arrow.moveTo(x, y);
+            arrow.lineTo(x - size * 0.72f, y - dy * size);
+            arrow.moveTo(x, y);
+            arrow.lineTo(x + size * 0.72f, y - dy * size);
+        }
+        canvas.drawPath(arrow, paint);
     }
 
     private LaneIcon iconForLane(int lane) {
@@ -158,15 +210,15 @@ public class LaneBarView extends View {
             case 6:
                 return icon(false, LEFT, RIGHT);
             case 7:
-                return icon(false, STRAIGHT, LEFT, RIGHT);
+                return icon(false, LEFT, STRAIGHT, RIGHT);
             case 8:
                 return icon(false, U_RIGHT);
             case 9:
-                return icon(false, STRAIGHT, U_LEFT);
+                return icon(false, U_LEFT, STRAIGHT);
             case 10:
                 return icon(false, STRAIGHT, U_RIGHT);
             case 11:
-                return icon(false, LEFT, U_LEFT);
+                return icon(false, U_LEFT, LEFT);
             case 12:
                 return icon(false, RIGHT, U_RIGHT);
             case 13:
@@ -181,7 +233,7 @@ public class LaneBarView extends View {
             case 18:
                 return icon(true, RIGHT);
             case 19:
-                return icon(true, RIGHT, STRAIGHT);
+                return icon(true, STRAIGHT, RIGHT);
             case 20:
                 return icon(true, U_LEFT);
             case 21:
@@ -193,147 +245,64 @@ public class LaneBarView extends View {
             case 24:
                 return icon(true, U_LEFT, STRAIGHT);
             case 25:
-                return icon(true, U_RIGHT, STRAIGHT);
+                return icon(true, STRAIGHT, U_RIGHT);
             case 26:
                 return icon(true, U_LEFT, LEFT);
             case 27:
-                return icon(true, U_RIGHT, RIGHT);
+                return icon(true, RIGHT, U_RIGHT);
             case 28:
             case 29:
                 return icon(true, EXTEND, STRAIGHT);
             case 30:
-                return complex(lane, new String[]{STRAIGHT, LEFT}, new boolean[]{true, false});
+                return complex(new int[]{STRAIGHT, LEFT}, new boolean[]{true, false});
             case 31:
-                return complex(lane, new String[]{STRAIGHT, LEFT}, new boolean[]{false, true});
+                return complex(new int[]{STRAIGHT, LEFT}, new boolean[]{false, true});
             case 32:
-                return complex(lane, new String[]{STRAIGHT, RIGHT}, new boolean[]{true, false});
+                return complex(new int[]{STRAIGHT, RIGHT}, new boolean[]{true, false});
             case 33:
-                return complex(lane, new String[]{STRAIGHT, RIGHT}, new boolean[]{false, true});
+                return complex(new int[]{STRAIGHT, RIGHT}, new boolean[]{false, true});
             case 34:
-                return complex(lane, new String[]{LEFT, RIGHT}, new boolean[]{true, false});
+                return complex(new int[]{LEFT, RIGHT}, new boolean[]{true, false});
             case 35:
-                return complex(lane, new String[]{LEFT, RIGHT}, new boolean[]{false, true});
+                return complex(new int[]{LEFT, RIGHT}, new boolean[]{false, true});
             case 36:
-                return complex(lane, new String[]{LEFT, STRAIGHT, RIGHT}, new boolean[]{false, true, false});
+                return complex(new int[]{LEFT, STRAIGHT, RIGHT}, new boolean[]{false, true, false});
             case 37:
-                return complex(lane, new String[]{LEFT, STRAIGHT, RIGHT}, new boolean[]{true, false, false});
+                return complex(new int[]{LEFT, STRAIGHT, RIGHT}, new boolean[]{true, false, false});
             case 38:
-                return complex(lane, new String[]{LEFT, STRAIGHT, RIGHT}, new boolean[]{false, false, true});
+                return complex(new int[]{LEFT, STRAIGHT, RIGHT}, new boolean[]{false, false, true});
             case 39:
-                return complex(lane, new String[]{U_LEFT, STRAIGHT}, new boolean[]{false, true});
+                return complex(new int[]{U_LEFT, STRAIGHT}, new boolean[]{false, true});
             case 40:
-                return complex(lane, new String[]{U_LEFT, STRAIGHT}, new boolean[]{true, false});
+                return complex(new int[]{U_LEFT, STRAIGHT}, new boolean[]{true, false});
             case 41:
-                return complex(lane, new String[]{STRAIGHT, U_RIGHT}, new boolean[]{true, false});
+                return complex(new int[]{STRAIGHT, U_RIGHT}, new boolean[]{true, false});
             case 42:
-                return complex(lane, new String[]{STRAIGHT, U_RIGHT}, new boolean[]{false, true});
+                return complex(new int[]{STRAIGHT, U_RIGHT}, new boolean[]{false, true});
             case 43:
-                return complex(lane, new String[]{LEFT, U_LEFT}, new boolean[]{true, false});
+                return complex(new int[]{LEFT, U_LEFT}, new boolean[]{true, false});
             case 44:
             case 48:
-                return complex(lane, new String[]{LEFT, U_LEFT}, new boolean[]{false, true});
+                return complex(new int[]{LEFT, U_LEFT}, new boolean[]{false, true});
             case 45:
-                return complex(lane, new String[]{RIGHT, U_RIGHT}, new boolean[]{true, false});
+                return complex(new int[]{RIGHT, U_RIGHT}, new boolean[]{true, false});
             case 46:
-                return complex(lane, new String[]{RIGHT, U_RIGHT}, new boolean[]{false, true});
+                return complex(new int[]{RIGHT, U_RIGHT}, new boolean[]{false, true});
             case 47:
-                return complex(lane, new String[]{EXTEND, LEFT, U_RIGHT}, new boolean[]{false, false, true});
+                return complex(new int[]{EXTEND, LEFT, U_RIGHT}, new boolean[]{false, false, true});
             default:
                 return icon(true, STRAIGHT);
         }
     }
 
-    private LaneIcon icon(boolean enabled, String... labels) {
-        boolean[] states = new boolean[labels.length];
+    private LaneIcon icon(boolean enabled, int... directions) {
+        boolean[] states = new boolean[directions.length];
         Arrays.fill(states, enabled);
-        return new LaneIcon(labels, states, false);
+        return new LaneIcon(directions, states);
     }
 
-    private LaneIcon complex(int lane, String[] labels, boolean[] enabled) {
-        return new LaneIcon(labels, enabled, true);
-    }
-
-    private void drawComplexLaneIcon(Canvas canvas, LaneIcon icon, float left, float width, boolean laneRecommended) {
-        paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeCap(Paint.Cap.ROUND);
-        paint.setStrokeJoin(Paint.Join.ROUND);
-        paint.setStrokeWidth(dp(3));
-        for (int i = 0; i < icon.labels.length; i++) {
-            if (i < icon.enabled.length && icon.enabled[i] && laneRecommended) {
-                continue;
-            }
-            paint.setColor(0xFF5F7890);
-            drawComplexBranch(canvas, icon.labels[i], left, width);
-        }
-        paint.setStrokeWidth(dp(4));
-        for (int i = 0; i < icon.labels.length; i++) {
-            if (i >= icon.enabled.length || !icon.enabled[i] || !laneRecommended) {
-                continue;
-            }
-            paint.setColor(0xFFFFFFFF);
-            drawComplexBranch(canvas, icon.labels[i], left, width);
-        }
-        paint.setStyle(Paint.Style.FILL);
-        paint.setStrokeCap(Paint.Cap.BUTT);
-    }
-
-    private void drawComplexBranch(Canvas canvas, String label, float left, float width) {
-        float cx = left + width / 2f;
-        float bottom = getHeight() - dp(10);
-        float midY = getHeight() - dp(25);
-        float top = dp(10);
-        float leftX = left + Math.max(dp(8), width * 0.22f);
-        float rightX = left + Math.min(width - dp(8), width * 0.78f);
-
-        path.reset();
-        path.moveTo(cx, bottom);
-        if (STRAIGHT.equals(label)) {
-            path.lineTo(cx, top + dp(5));
-        } else if (LEFT.equals(label)) {
-            path.lineTo(cx, midY);
-            path.cubicTo(cx, midY - dp(10), leftX + dp(8), top + dp(12), leftX, top + dp(8));
-        } else if (RIGHT.equals(label)) {
-            path.lineTo(cx, midY);
-            path.cubicTo(cx, midY - dp(10), rightX - dp(8), top + dp(12), rightX, top + dp(8));
-        } else if (U_LEFT.equals(label)) {
-            path.lineTo(cx, midY);
-            path.cubicTo(cx, top + dp(7), leftX, top + dp(7), leftX, midY + dp(6));
-        } else if (U_RIGHT.equals(label)) {
-            path.lineTo(cx, midY);
-            path.cubicTo(cx, top + dp(7), rightX, top + dp(7), rightX, midY + dp(6));
-        } else {
-            path.lineTo(cx, top + dp(5));
-        }
-        canvas.drawPath(path, paint);
-
-        if (STRAIGHT.equals(label) || EXTEND.equals(label)) {
-            drawArrowHead(canvas, cx, top + dp(5), 0f, -1f);
-        } else if (LEFT.equals(label)) {
-            drawArrowHead(canvas, leftX, top + dp(8), -1f, -0.15f);
-        } else if (RIGHT.equals(label)) {
-            drawArrowHead(canvas, rightX, top + dp(8), 1f, -0.15f);
-        } else if (U_LEFT.equals(label)) {
-            drawArrowHead(canvas, leftX, midY + dp(6), 0f, 1f);
-        } else if (U_RIGHT.equals(label)) {
-            drawArrowHead(canvas, rightX, midY + dp(6), 0f, 1f);
-        }
-    }
-
-    private void drawArrowHead(Canvas canvas, float x, float y, float dx, float dy) {
-        float size = dp(5);
-        path.reset();
-        if (Math.abs(dx) > Math.abs(dy)) {
-            path.moveTo(x, y);
-            path.lineTo(x - dx * size, y - size);
-            path.moveTo(x, y);
-            path.lineTo(x - dx * size, y + size);
-        } else {
-            path.moveTo(x, y);
-            path.lineTo(x - size, y - dy * size);
-            path.moveTo(x, y);
-            path.lineTo(x + size, y - dy * size);
-        }
-        canvas.drawPath(path, paint);
+    private LaneIcon complex(int[] directions, boolean[] enabled) {
+        return new LaneIcon(directions, enabled);
     }
 
     private int dp(int value) {
@@ -341,14 +310,12 @@ public class LaneBarView extends View {
     }
 
     private static final class LaneIcon {
-        final String[] labels;
+        final int[] directions;
         final boolean[] enabled;
-        final boolean complex;
 
-        LaneIcon(String[] labels, boolean[] enabled, boolean complex) {
-            this.labels = labels;
+        LaneIcon(int[] directions, boolean[] enabled) {
+            this.directions = directions;
             this.enabled = enabled;
-            this.complex = complex;
         }
 
         boolean hasEnabled() {

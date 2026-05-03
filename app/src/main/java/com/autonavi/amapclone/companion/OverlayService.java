@@ -41,6 +41,8 @@ public class OverlayService extends Service {
     private static final String CHANNEL_ID = "amap_companion";
     private static final String ACTION_SEND = "AUTONAVI_STANDARD_BROADCAST_SEND";
     private static final String ACTION_RECV = "AUTONAVI_STANDARD_BROADCAST_RECV";
+    private static final int KEY_TRAFFIC_LIGHT_COUNTDOWN = 60073;
+    private static final long ALERT_TTL_MS = 15000L;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private WindowManager windowManager;
@@ -62,12 +64,23 @@ public class OverlayService extends Service {
     private int downY;
     private boolean dragging;
     private String lastDetailedMode;
+    private long alertUpdatedAt;
 
     private final Runnable lanePoll = new Runnable() {
         @Override
         public void run() {
             requestLaneInfo();
+            requestTrafficLightInfo();
             mainHandler.postDelayed(this, 6000L);
+        }
+    };
+
+    private final Runnable alertClear = new Runnable() {
+        @Override
+        public void run() {
+            if (System.currentTimeMillis() - alertUpdatedAt >= ALERT_TTL_MS) {
+                clearAlertDetails();
+            }
         }
     };
 
@@ -98,6 +111,7 @@ public class OverlayService extends Service {
     @Override
     public void onDestroy() {
         mainHandler.removeCallbacks(lanePoll);
+        mainHandler.removeCallbacks(alertClear);
         try {
             unregisterReceiver(receiver);
         } catch (Throwable ignored) {
@@ -328,7 +342,9 @@ public class OverlayService extends Service {
         updateLaneFromExtras(extras);
         updateProtocolDetails(extras);
 
-        if (extras.containsKey("trafficLightStatus")
+        int keyType = intValue(extras, "KEY_TYPE", -1);
+        if (keyType == KEY_TRAFFIC_LIGHT_COUNTDOWN
+                || extras.containsKey("trafficLightStatus")
                 || extras.containsKey("TRAFFIC_LIGHT_STATUS")
                 || extras.containsKey("traffic_light_status")
                 || extras.containsKey("redLightCountDownSeconds")
@@ -340,6 +356,8 @@ public class OverlayService extends Service {
                 || extras.containsKey("leftRedLightCountDownSeconds")
                 || extras.containsKey("straightRedLightCountDownSeconds")
                 || extras.containsKey("rightRedLightCountDownSeconds")
+                || extras.containsKey("trafficLights")
+                || extras.containsKey("trafficLightInfo")
                 || extras.containsKey("dir")) {
             updateTrafficLights(extras);
         }
@@ -483,6 +501,19 @@ public class OverlayService extends Service {
         if (lightRow == null) {
             return;
         }
+        int keyType = intValue(extras, "KEY_TYPE", -1);
+        if (keyType != KEY_TRAFFIC_LIGHT_COUNTDOWN
+                && intValue(extras, "TRAFFIC_LIGHT_NUM", -1) == 0
+                && intValue(extras, "routeRemainTrafficLightNum", -1) == 0
+                && !hasCountdownPayload(extras)) {
+            trafficLights.clear();
+            renderTrafficLights();
+            return;
+        }
+        if (updateTrafficLightsFromJson(extras)) {
+            renderTrafficLights();
+            return;
+        }
         if (updateDirectionalTrafficLights(extras)) {
             renderTrafficLights();
             return;
@@ -504,30 +535,114 @@ public class OverlayService extends Service {
             count = 1;
         }
 
-        if (!inCruiseMode) {
-            trafficLights.clear();
-        }
-
         for (int i = 0; i < count; i++) {
             int dir = valueAt(dirs, i, intValue(extras, "dir", intValue(extras, "direction", -1)));
             int status = valueAt(statuses, i, intValue(extras, "trafficLightStatus", -1));
             int red = valueAt(reds, i, intValue(extras, "redLightCountDownSeconds", 0));
             int green = valueAt(greens, i, intValue(extras, "greenLightLastSecond", 0));
             int seconds = red > 0 ? red : green;
-            int key = inCruiseMode && dir >= 0 ? dir : 999;
+            int key = dir >= 0 ? dir : 999;
             if (seconds <= 0) {
                 trafficLights.remove(key);
                 continue;
             }
-            LightState state = new LightState();
-            state.dir = dir;
-            state.status = status;
-            state.seconds = seconds;
-            state.color = colorForStatus(status, red, green);
-            state.updatedAt = System.currentTimeMillis();
-            trafficLights.put(key, state);
+            putLightState(key, dir, status, red, green, seconds);
         }
         renderTrafficLights();
+    }
+
+    private boolean hasCountdownPayload(Bundle extras) {
+        return hasAny(extras, "trafficLightStatus", "TRAFFIC_LIGHT_STATUS", "traffic_light_status",
+                "redLightCountDownSeconds", "redLightCountDownSecond", "redLightCountdownSeconds",
+                "redSeconds", "redCountDown", "redCountdown", "RED_LIGHT_COUNT_DOWN_SECONDS",
+                "greenLightLastSecond", "greenLightCountDownSeconds", "greenLightCountdownSeconds",
+                "greenSeconds", "greenCountDown", "greenCountdown", "GREEN_LIGHT_LAST_SECOND",
+                "dir", "direction", "trafficLightDir", "trafficLightDirection", "trafficLights",
+                "trafficLight", "trafficLightInfo", "trafficLightsCountdownInfo");
+    }
+
+    private boolean updateTrafficLightsFromJson(Bundle extras) {
+        boolean handled = false;
+        for (String key : extras.keySet()) {
+            Object value = extras.get(key);
+            if (value == null) {
+                continue;
+            }
+            String text = String.valueOf(value);
+            if (TextUtils.isEmpty(text) || !looksLikeTrafficLightPayload(key, text)) {
+                continue;
+            }
+            handled |= parseTrafficLightPayload(text);
+        }
+        return handled;
+    }
+
+    private boolean looksLikeTrafficLightPayload(String key, String text) {
+        String lowerKey = key == null ? "" : key.toLowerCase(java.util.Locale.US);
+        String lowerText = text.toLowerCase(java.util.Locale.US);
+        return lowerKey.contains("trafficlight") || lowerKey.contains("traffic_light")
+                || lowerKey.contains("redlight") || lowerKey.contains("greenlight")
+                || lowerText.contains("redlightcountdownseconds")
+                || lowerText.contains("greenlightlastsecond")
+                || lowerText.contains("trafficlightstatus");
+    }
+
+    private boolean parseTrafficLightPayload(String text) {
+        try {
+            String trimmed = text.trim();
+            if (trimmed.startsWith("[")) {
+                JSONArray array = new JSONArray(trimmed);
+                boolean handled = false;
+                for (int i = 0; i < array.length(); i++) {
+                    JSONObject item = array.optJSONObject(i);
+                    if (item != null) {
+                        handled |= parseTrafficLightObject(item);
+                    }
+                }
+                return handled;
+            }
+            if (trimmed.startsWith("{")) {
+                return parseTrafficLightObject(new JSONObject(trimmed));
+            }
+        } catch (Throwable t) {
+            Log.d(TAG, "traffic light payload parse skipped: " + text);
+        }
+        return false;
+    }
+
+    private boolean parseTrafficLightObject(JSONObject object) {
+        boolean handled = false;
+        JSONArray lights = object.optJSONArray("trafficLights");
+        if (lights == null) {
+            lights = object.optJSONArray("trafficLight");
+        }
+        if (lights == null) {
+            lights = object.optJSONArray("lights");
+        }
+        if (lights != null) {
+            for (int i = 0; i < lights.length(); i++) {
+                JSONObject item = lights.optJSONObject(i);
+                if (item != null) {
+                    handled |= parseTrafficLightObject(item);
+                }
+            }
+        }
+
+        int dir = object.optInt("dir", object.optInt("direction",
+                object.optInt("trafficLightDir", object.optInt("trafficLightDirection", -1))));
+        int status = object.optInt("trafficLightStatus", object.optInt("status",
+                object.optInt("trafficLightState", -1)));
+        int red = object.optInt("redLightCountDownSeconds", object.optInt("redLightCountdownSeconds",
+                object.optInt("redSeconds", object.optInt("redCountDown", 0))));
+        int green = object.optInt("greenLightLastSecond", object.optInt("greenLightCountDownSeconds",
+                object.optInt("greenLightCountdownSeconds", object.optInt("greenSeconds", 0))));
+        int seconds = red > 0 ? red : green;
+        if (seconds > 0) {
+            int key = dir >= 0 ? dir : 999;
+            putLightState(key, dir, status, red, green, seconds);
+            handled = true;
+        }
+        return handled;
     }
 
     private boolean updateDirectionalTrafficLights(Bundle extras) {
@@ -555,15 +670,20 @@ public class OverlayService extends Service {
         if (seconds <= 0) {
             return false;
         }
+        int status = keys[0].toLowerCase(java.util.Locale.US).contains("green") ? 4 : 1;
+        putLightState(dir >= 0 ? dir : 999, dir, status, status == 1 ? seconds : 0,
+                status == 4 ? seconds : 0, seconds);
+        return true;
+    }
+
+    private void putLightState(int key, int dir, int status, int red, int green, int seconds) {
         LightState state = new LightState();
         state.dir = dir;
-        state.status = keys[0].toLowerCase(java.util.Locale.US).contains("green") ? 4 : 1;
+        state.status = status;
         state.seconds = seconds;
-        state.color = colorForStatus(state.status, state.status == 1 ? seconds : 0,
-                state.status == 4 ? seconds : 0);
+        state.color = colorForStatus(status, red, green);
         state.updatedAt = System.currentTimeMillis();
-        trafficLights.put(inCruiseMode ? dir : 999, state);
-        return true;
+        trafficLights.put(key, state);
     }
 
     private void renderTrafficLights() {
@@ -603,7 +723,8 @@ public class OverlayService extends Service {
         view.setMinWidth(dp(inCruiseMode ? 62 : 54));
         view.setMinHeight(dp(34));
         view.setPadding(dp(12), 0, dp(12), dp(1));
-        String label = inCruiseMode ? directionLabel(state.dir) : "";
+        String label = state.dir >= 0 && (inCruiseMode || trafficLights.size() > 1)
+                ? directionLabel(state.dir) : "";
         view.setText(label + state.seconds + "s");
         GradientDrawable bg = new GradientDrawable();
         bg.setColor(state.color);
@@ -781,6 +902,9 @@ public class OverlayService extends Service {
             return;
         }
         ArrayList<String> parts = new ArrayList<>();
+        boolean alertPayload = hasAny(extras, "LIMITED_SPEED", "CAMERA_INDEX", "CAMERA_DIST",
+                "CAMERA_SPEED", "CAMERA_TYPE", "SAPA_DIST", "SAPA_NAME", "TRAFFIC_LIGHT_NUM",
+                "routeRemainTrafficLightNum");
 
         int limitedSpeed = intValue(extras, "LIMITED_SPEED", -1);
         if (limitedSpeed > 0) {
@@ -818,11 +942,25 @@ public class OverlayService extends Service {
         }
 
         if (parts.isEmpty()) {
+            if (alertPayload) {
+                clearAlertDetails();
+            }
             return;
         }
         alertText.setText(join(parts, "  \u00b7  "));
         alertText.setVisibility(View.VISIBLE);
+        alertUpdatedAt = System.currentTimeMillis();
+        mainHandler.removeCallbacks(alertClear);
+        mainHandler.postDelayed(alertClear, ALERT_TTL_MS + 200L);
         panel.setVisibility(View.VISIBLE);
+    }
+
+    private void clearAlertDetails() {
+        if (alertText != null) {
+            alertText.setVisibility(View.GONE);
+            alertText.setText("");
+        }
+        mainHandler.removeCallbacks(alertClear);
     }
 
     private void updateStatusDetails(Bundle extras) {
@@ -1018,6 +1156,18 @@ public class OverlayService extends Service {
             Log.d(TAG, "request lane info KEY_TYPE=10062");
         } catch (Throwable t) {
             Log.e(TAG, "request lane info failed", t);
+        }
+    }
+
+    private void requestTrafficLightInfo() {
+        try {
+            Intent intent = new Intent(ACTION_RECV);
+            intent.setPackage(MainActivity.getTargetPackage(this));
+            intent.putExtra("KEY_TYPE", KEY_TRAFFIC_LIGHT_COUNTDOWN);
+            sendBroadcast(intent);
+            Log.d(TAG, "request traffic light info KEY_TYPE=" + KEY_TRAFFIC_LIGHT_COUNTDOWN);
+        } catch (Throwable t) {
+            Log.e(TAG, "request traffic light info failed", t);
         }
     }
 
