@@ -3,3 +3,5 @@ build/
 *.idsig
 *.png
 backup/
+debug.keystore
+release.keystore
