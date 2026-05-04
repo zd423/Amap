@@ -847,7 +847,7 @@ public class OverlayService extends Service {
     }
 
     private int colorForStatus(int status, int red, int green) {
-        if (green > 0 && green <= 3) {
+        if (isYellowTailCountdown(red, green)) {
             return 0xFFFFCC00;
         }
         if (isYellowLightStatus(status)) {
@@ -888,6 +888,10 @@ public class OverlayService extends Service {
 
     private boolean isYellowLightStatus(int status) {
         return status == 0 || status == 2 || status == 3 || status == 5 || status == 6;
+    }
+
+    private boolean isYellowTailCountdown(int red, int green) {
+        return (green == 3 && red == 0) || (green > 0 && green < 3);
     }
 
     private String directionLabel(int dir) {
