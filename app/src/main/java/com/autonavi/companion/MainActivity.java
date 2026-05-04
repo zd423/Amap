@@ -305,6 +305,7 @@ public class MainActivity extends Activity {
         laneSection.addView(laneTitle, new LinearLayout.LayoutParams(-2, -2));
 
         LaneBarView laneBar = new LaneBarView(this);
+        laneBar.setFrameScaleMultiplier(1f);
         laneBar.setScaleMultiplier(1.5f);
         laneBar.setLaneData(new int[]{15, 31, 18}, new boolean[]{true, false, true});
         laneSection.addView(laneBar, new LinearLayout.LayoutParams(-2, -2));

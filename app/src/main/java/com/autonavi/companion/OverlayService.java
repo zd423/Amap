@@ -228,6 +228,7 @@ public class OverlayService extends Service {
         laneTitle.setGravity(Gravity.CENTER);
         laneSection.addView(laneTitle, new LinearLayout.LayoutParams(-2, -2));
         laneBar = new LaneBarView(this);
+        laneBar.setFrameScaleMultiplier(overlayScale);
         laneBar.setScaleMultiplier(1.5f);
         LinearLayout.LayoutParams laneLp = new LinearLayout.LayoutParams(-2, -2);
         laneLp.setMargins(0, dp(2), 0, 0);

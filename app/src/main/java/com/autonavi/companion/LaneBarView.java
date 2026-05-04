@@ -15,7 +15,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 public class LaneBarView extends View {
-    private static final float FRAME_SCALE = 0.66f;
+    private static final float FRAME_SCALE = 0.78f;
     private static final int STRAIGHT = 1;
     private static final int LEFT = 2;
     private static final int RIGHT = 3;
@@ -31,6 +31,7 @@ public class LaneBarView extends View {
     private boolean[] recommend = new boolean[]{true, true, true, true};
     private boolean cruiseLaneStyle = true;
     private float iconScaleMultiplier = 1f;
+    private float frameScaleMultiplier = 1f;
 
     public LaneBarView(Context context) {
         super(context);
@@ -88,6 +89,12 @@ public class LaneBarView extends View {
 
     public void setScaleMultiplier(float multiplier) {
         iconScaleMultiplier = Math.max(0.5f, multiplier);
+        invalidate();
+    }
+
+    public void setFrameScaleMultiplier(float multiplier) {
+        frameScaleMultiplier = Math.max(0.5f, multiplier);
+        requestLayout();
         invalidate();
     }
 
@@ -502,7 +509,7 @@ public class LaneBarView extends View {
     }
 
     private int dp(int value) {
-        return (int) (value * FRAME_SCALE * getResources().getDisplayMetrics().density + 0.5f);
+        return (int) (value * FRAME_SCALE * frameScaleMultiplier * getResources().getDisplayMetrics().density + 0.5f);
     }
 
     private static final class LaneIcon {
