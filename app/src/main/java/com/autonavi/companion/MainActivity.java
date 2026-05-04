@@ -17,9 +17,10 @@ import android.provider.Settings;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.widget.Button;
-import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -33,22 +34,29 @@ public class MainActivity extends Activity {
     static final String PREFS = "amap_companion";
     static final String KEY_TARGET_PACKAGE = "target_package";
     static final String KEY_UPDATE_URL = "update_url";
+    static final String KEY_OVERLAY_SCALE_PERCENT = "overlay_scale_percent";
+    static final String ACTION_OVERLAY_SCALE_CHANGED = "com.autonavi.companion.OVERLAY_SCALE_CHANGED";
     static final String DEFAULT_TARGET_PACKAGE = "com.autonavi.amapClone";
-    static final String DEFAULT_UPDATE_URL = "";
+    static final String DEFAULT_UPDATE_URL = "https://amap-companion.zuoqirun.top/update.json";
+    static final int MIN_OVERLAY_SCALE_PERCENT = 80;
+    static final int MAX_OVERLAY_SCALE_PERCENT = 300;
+    static final int DEFAULT_OVERLAY_SCALE_PERCENT = 200;
     private static final String TARGET_PACKAGE_PREFIX = "com.autonavi.";
 
     private TextView targetText;
     private TextView updateText;
+    private TextView overlayScaleText;
+    private FrameLayout overlayPreviewStage;
+    private LinearLayout overlayPreviewPanel;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        persistDefaultUpdateUrl();
         setContentView(buildContent());
         startOverlayService();
         targetText.postDelayed(() -> {
-            if (!TextUtils.isEmpty(getUpdateUrl())) {
-                checkForUpdates(false);
-            }
+            checkForUpdates(false);
         }, 2000L);
     }
 
@@ -100,10 +108,237 @@ public class MainActivity extends Activity {
         controls.addView(button("\u542f\u52a8\u60ac\u6d6e\u7a97", v -> startOverlayService(), 0xFF0F766E));
         controls.addView(button("\u5173\u95ed\u60ac\u6d6e\u7a97", v -> stopOverlayService(), 0xFFB45309));
         controls.addView(button("\u6253\u5f00\u76ee\u6807\u5e94\u7528", v -> openTargetApp(), 0xFF111827));
-        controls.addView(button("\u8bbe\u7f6e\u66f4\u65b0\u5730\u5740", v -> editUpdateUrl(), 0xFF334155));
         controls.addView(button("\u68c0\u67e5\u66f4\u65b0", v -> checkForUpdates(true), 0xFF059669));
+        addOverlayScaleControls(controls);
 
         return scroll;
+    }
+
+    private void addOverlayScaleControls(LinearLayout parent) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(2), dp(10), dp(2), 0);
+
+        overlayScaleText = new TextView(this);
+        overlayScaleText.setTextSize(14f);
+        overlayScaleText.setTextColor(0xFF111827);
+        overlayScaleText.setTypeface(Typeface.DEFAULT_BOLD);
+        box.addView(overlayScaleText, new LinearLayout.LayoutParams(-1, -2));
+        addOverlayPreview(box);
+
+        SeekBar seekBar = new SeekBar(this);
+        seekBar.setMax(MAX_OVERLAY_SCALE_PERCENT - MIN_OVERLAY_SCALE_PERCENT);
+        seekBar.setProgress(getOverlayScalePercent(this) - MIN_OVERLAY_SCALE_PERCENT);
+        seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                int percent = MIN_OVERLAY_SCALE_PERCENT + progress;
+                updateOverlayScaleText(percent);
+                if (fromUser) {
+                    saveOverlayScalePercent(percent);
+                }
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar bar) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar bar) {
+                int percent = MIN_OVERLAY_SCALE_PERCENT + bar.getProgress();
+                saveOverlayScalePercent(percent);
+                updateOverlayScaleText(percent);
+            }
+        });
+        box.addView(seekBar, new LinearLayout.LayoutParams(-1, -2));
+        updateOverlayScaleText(getOverlayScalePercent(this));
+        box.addView(button("\u5e94\u7528\u5f53\u524d\u5927\u5c0f\u5230\u60ac\u6d6e\u7a97", v -> notifyOverlayScaleChanged(), 0xFF334155));
+
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.setMargins(0, dp(10), 0, 0);
+        parent.addView(box, lp);
+    }
+
+    private void addOverlayPreview(LinearLayout parent) {
+        overlayPreviewStage = new FrameLayout(this);
+        overlayPreviewStage.setPadding(dp(10), dp(10), dp(10), dp(10));
+        overlayPreviewStage.setBackground(navigationPreviewBackground());
+        addPreviewRoads(overlayPreviewStage);
+
+        LinearLayout topGuide = buildPreviewTopGuide();
+        FrameLayout.LayoutParams topLp = new FrameLayout.LayoutParams(-1, -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        topLp.setMargins(dp(6), dp(6), dp(6), 0);
+        overlayPreviewStage.addView(topGuide, topLp);
+
+        overlayPreviewPanel = buildOverlayPreviewPanel();
+        FrameLayout.LayoutParams panelLp = new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER | Gravity.BOTTOM);
+        panelLp.setMargins(0, dp(66), 0, dp(12));
+        overlayPreviewStage.addView(overlayPreviewPanel, panelLp);
+
+        LinearLayout.LayoutParams stageLp = new LinearLayout.LayoutParams(-1, dp(260));
+        stageLp.setMargins(0, dp(8), 0, dp(2));
+        parent.addView(overlayPreviewStage, stageLp);
+    }
+
+    private GradientDrawable navigationPreviewBackground() {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setOrientation(GradientDrawable.Orientation.TOP_BOTTOM);
+        bg.setColors(new int[]{0xFF182436, 0xFF0B1320});
+        bg.setCornerRadius(dp(8));
+        bg.setStroke(dp(1), 0xFF1F2A3A);
+        return bg;
+    }
+
+    private void addPreviewRoads(FrameLayout stage) {
+        stage.addView(previewRoad(dp(260), dp(16), -18f, 0xFF0F8F6D),
+                roadLayout(dp(-28), dp(184), dp(360), dp(18)));
+        stage.addView(previewRoad(dp(190), dp(11), -18f, 0xFF14B88A),
+                roadLayout(dp(190), dp(204), dp(250), dp(13)));
+        stage.addView(previewRoad(dp(210), dp(9), 28f, 0xFF24364C),
+                roadLayout(dp(10), dp(116), dp(260), dp(12)));
+        stage.addView(previewRoad(dp(180), dp(8), 28f, 0xFF24364C),
+                roadLayout(dp(210), dp(98), dp(240), dp(10)));
+    }
+
+    private FrameLayout.LayoutParams roadLayout(int left, int top, int width, int height) {
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(width, height, Gravity.TOP | Gravity.LEFT);
+        lp.leftMargin = left;
+        lp.topMargin = top;
+        return lp;
+    }
+
+    private android.view.View previewRoad(int width, int height, float rotation, int color) {
+        android.view.View road = new android.view.View(this);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(color);
+        bg.setCornerRadius(height / 2f);
+        road.setBackground(bg);
+        road.setRotation(rotation);
+        road.setAlpha(0.92f);
+        return road;
+    }
+
+    private LinearLayout buildPreviewTopGuide() {
+        LinearLayout top = new LinearLayout(this);
+        top.setOrientation(LinearLayout.VERTICAL);
+        top.setPadding(dp(10), dp(8), dp(10), dp(7));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(0xF0000000);
+        bg.setCornerRadius(dp(8));
+        top.setBackground(bg);
+
+        TextView main = new TextView(this);
+        main.setText("\u2190 669 \u7c73  \u8fdb\u5165 \u6986\u4e61\u8def\u8f85\u8def");
+        main.setTextSize(15f);
+        main.setTextColor(Color.WHITE);
+        main.setTypeface(Typeface.DEFAULT_BOLD);
+        main.setSingleLine(true);
+        top.addView(main, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView sub = new TextView(this);
+        sub.setText("5.3\u516c\u91cc \u00b7 10\u5206\u949f                                      05:42\u5230");
+        sub.setTextSize(8.5f);
+        sub.setTextColor(0xFFD1D5DB);
+        sub.setSingleLine(true);
+        LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(-1, -2);
+        subLp.setMargins(0, dp(5), 0, 0);
+        top.addView(sub, subLp);
+        return top;
+    }
+
+    private LinearLayout buildOverlayPreviewPanel() {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setGravity(Gravity.CENTER_HORIZONTAL);
+        panel.setPadding(dp(6), dp(5), dp(6), dp(5));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(0xEA111827);
+        bg.setCornerRadius(dp(7));
+        bg.setStroke(dp(1), 0x22FFFFFF);
+        panel.setBackground(bg);
+
+        TextView mode = new TextView(this);
+        mode.setText("\u5bfc\u822a \u00b7 \u5357\u56db\u73af\u4e1c\u8def\u8f85\u8def \u00b7 39 km/h");
+        mode.setTextSize(6.5f);
+        mode.setTextColor(0xFFE8EAED);
+        mode.setSingleLine(true);
+        panel.addView(mode, new LinearLayout.LayoutParams(-2, -2));
+
+        TextView turn = new TextView(this);
+        turn.setText("\u2190  669\u7c73\n\u8fdb\u5165 \u6986\u4e61\u8def\u8f85\u8def");
+        turn.setTextSize(15f);
+        turn.setTypeface(Typeface.DEFAULT_BOLD);
+        turn.setGravity(Gravity.CENTER);
+        turn.setTextColor(Color.WHITE);
+        turn.setPadding(dp(12), dp(4), dp(12), dp(5));
+        GradientDrawable turnBg = new GradientDrawable();
+        turnBg.setOrientation(GradientDrawable.Orientation.LEFT_RIGHT);
+        turnBg.setColors(new int[]{0xFF1D4ED8, 0xFF0891B2});
+        turnBg.setCornerRadius(dp(5));
+        turn.setBackground(turnBg);
+        LinearLayout.LayoutParams turnLp = new LinearLayout.LayoutParams(-2, -2);
+        turnLp.setMargins(0, dp(3), 0, dp(3));
+        panel.addView(turn, turnLp);
+
+        LinearLayout lights = new LinearLayout(this);
+        lights.setOrientation(LinearLayout.HORIZONTAL);
+        lights.setGravity(Gravity.CENTER);
+        lights.addView(previewLight("\u2190 51s", 0xFFC62828));
+        lights.addView(previewLight("\u2191 18s", 0xFFC62828));
+        panel.addView(lights, new LinearLayout.LayoutParams(-2, -2));
+
+        LinearLayout laneSection = new LinearLayout(this);
+        laneSection.setOrientation(LinearLayout.VERTICAL);
+        laneSection.setGravity(Gravity.CENTER_HORIZONTAL);
+        laneSection.setPadding(dp(4), dp(3), dp(4), dp(4));
+        GradientDrawable laneBg = new GradientDrawable();
+        laneBg.setColor(0xCC0F172A);
+        laneBg.setCornerRadius(dp(5));
+        laneBg.setStroke(dp(1), 0x1FFFFFFF);
+        laneSection.setBackground(laneBg);
+
+        TextView laneTitle = new TextView(this);
+        laneTitle.setText("\u8f66\u9053\u4fe1\u606f");
+        laneTitle.setTextSize(5.5f);
+        laneTitle.setTextColor(0xFFBAE6FD);
+        laneTitle.setTypeface(Typeface.DEFAULT_BOLD);
+        laneSection.addView(laneTitle, new LinearLayout.LayoutParams(-2, -2));
+
+        LaneBarView laneBar = new LaneBarView(this);
+        laneBar.setScaleMultiplier(1.5f);
+        laneBar.setLaneData(new int[]{15, 31, 18}, new boolean[]{true, false, true});
+        laneSection.addView(laneBar, new LinearLayout.LayoutParams(-2, -2));
+        LinearLayout.LayoutParams laneLp = new LinearLayout.LayoutParams(-2, -2);
+        laneLp.setMargins(0, dp(3), 0, dp(2));
+        panel.addView(laneSection, laneLp);
+
+        TextView eta = new TextView(this);
+        eta.setText("5.3\u516c\u91cc \u00b7 10\u5206\u949f\n\u9884\u8ba105:42\u5230\u8fbe\n\u76ee\u7684\u5730 \u5c0f\u7ea2\u95e8\u4e61\u515a\u7fa4\u670d\u52a1\u4e2d\u5fc3");
+        eta.setTextSize(7.5f);
+        eta.setTextColor(0xFFE8EAED);
+        eta.setGravity(Gravity.CENTER);
+        panel.addView(eta, new LinearLayout.LayoutParams(-2, -2));
+        return panel;
+    }
+
+    private TextView previewLight(String text, int color) {
+        TextView view = new TextView(this);
+        view.setText(text);
+        view.setTextSize(10f);
+        view.setTypeface(Typeface.DEFAULT_BOLD);
+        view.setTextColor(Color.WHITE);
+        view.setGravity(Gravity.CENTER);
+        view.setMinWidth(dp(31));
+        view.setMinHeight(dp(18));
+        view.setPadding(dp(5), 0, dp(5), 0);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(color);
+        bg.setCornerRadius(dp(9));
+        view.setBackground(bg);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, dp(18));
+        lp.setMargins(dp(2), dp(2), dp(2), dp(2));
+        view.setLayoutParams(lp);
+        return view;
     }
 
     private LinearLayout card(int color) {
@@ -244,29 +479,11 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void editUpdateUrl() {
-        EditText input = new EditText(this);
-        input.setSingleLine(false);
-        input.setMinLines(2);
-        input.setText(getUpdateUrl());
-        input.setHint("http://your-server:8787/update.json");
-        new AlertDialog.Builder(this)
-                .setTitle("\u8bbe\u7f6e\u66f4\u65b0\u5730\u5740")
-                .setView(input)
-                .setPositiveButton("\u4fdd\u5b58", (dialog, which) -> {
-                    saveUpdateUrl(input.getText().toString().trim());
-                    updateUpdateText("\u66f4\u65b0\u670d\u52a1\u5668\n" + displayUpdateUrl());
-                })
-                .setNegativeButton("\u53d6\u6d88", null)
-                .show();
-    }
-
     private void checkForUpdates(boolean manual) {
         String url = getUpdateUrl();
         if (TextUtils.isEmpty(url)) {
             if (manual) {
-                Toast.makeText(this, "\u8bf7\u5148\u8bbe\u7f6e\u66f4\u65b0\u5730\u5740", Toast.LENGTH_SHORT).show();
-                editUpdateUrl();
+                Toast.makeText(this, "\u66f4\u65b0\u5730\u5740\u672a\u914d\u7f6e", Toast.LENGTH_SHORT).show();
             }
             return;
         }
@@ -290,42 +507,21 @@ public class MainActivity extends Activity {
             return;
         }
         updateUpdateText("\u53d1\u73b0\u65b0\u7248\n" + info.remoteVersionName + " (" + info.remoteVersionCode + ")");
-        if (manual) {
-            showUpdateDetail(info);
-        }
+        showUpdateDetail(info);
     }
 
     private void showUpdateDetail(Updater.UpdateInfo info) {
         new AlertDialog.Builder(this)
                 .setTitle("\u53d1\u73b0\u65b0\u7248")
                 .setMessage(info.detailText())
-                .setPositiveButton("\u66f4\u65b0", (dialog, which) -> chooseInstallMode(info))
+                .setPositiveButton("\u66f4\u65b0", (dialog, which) -> installUpdate(info))
                 .setNegativeButton("\u53d6\u6d88", null)
                 .show();
     }
 
-    private void chooseInstallMode(Updater.UpdateInfo info) {
-        String[] modes = new String[]{
-                "pm install\uff08\u5199\u5165 /data/local/tmp \u540e\u5b89\u88c5\uff09",
-                "adb install\uff08\u5199\u5165 /data/local/tmp \u540e\u5b89\u88c5\uff09",
-                "\u7cfb\u7edf\u5b89\u88c5\u5668",
-                "\u8bbe\u5907\u7ba1\u7406\u5458\uff08\u5c1a\u672a\u5b9e\u73b0\uff09"
-        };
-        Updater.InstallMode[] values = new Updater.InstallMode[]{
-                Updater.InstallMode.PM_INSTALL,
-                Updater.InstallMode.ADB_INSTALL,
-                Updater.InstallMode.SYSTEM_INSTALLER,
-                Updater.InstallMode.DEVICE_OWNER
-        };
-        new AlertDialog.Builder(this)
-                .setTitle("\u9009\u62e9\u5b89\u88c5\u65b9\u5f0f")
-                .setItems(modes, (dialog, which) -> installUpdate(info, values[which]))
-                .show();
-    }
-
-    private void installUpdate(Updater.UpdateInfo info, Updater.InstallMode mode) {
+    private void installUpdate(Updater.UpdateInfo info) {
         updateUpdateText("\u51c6\u5907\u66f4\u65b0...\n" + info.remoteVersionName + " (" + info.remoteVersionCode + ")");
-        new Thread(() -> Updater.install(this, info, mode,
+        new Thread(() -> Updater.install(this, info,
                 message -> runOnUiThread(() -> updateUpdateText(message)))).start();
     }
 
@@ -345,17 +541,72 @@ public class MainActivity extends Activity {
     private void saveUpdateUrl(String url) {
         getSharedPreferences(PREFS, MODE_PRIVATE)
                 .edit()
-                .putString(KEY_UPDATE_URL, url == null ? "" : url)
+                .putString(KEY_UPDATE_URL, TextUtils.isEmpty(url) ? DEFAULT_UPDATE_URL : url)
                 .apply();
     }
 
+    private void persistDefaultUpdateUrl() {
+        saveUpdateUrl(DEFAULT_UPDATE_URL);
+    }
+
     private String getUpdateUrl() {
-        return getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_UPDATE_URL, DEFAULT_UPDATE_URL);
+        String value = getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_UPDATE_URL, DEFAULT_UPDATE_URL);
+        return TextUtils.isEmpty(value) ? DEFAULT_UPDATE_URL : value;
     }
 
     private String displayUpdateUrl() {
         String url = getUpdateUrl();
         return TextUtils.isEmpty(url) ? "\u672a\u8bbe\u7f6e" : url;
+    }
+
+    private void saveOverlayScalePercent(int percent) {
+        getSharedPreferences(PREFS, MODE_PRIVATE)
+                .edit()
+                .putInt(KEY_OVERLAY_SCALE_PERCENT, clampOverlayScalePercent(percent))
+                .apply();
+    }
+
+    private void updateOverlayScaleText(int percent) {
+        if (overlayScaleText != null) {
+            overlayScaleText.setText("\u60ac\u6d6e\u7a97\u5927\u5c0f " + clampOverlayScalePercent(percent) + "%");
+        }
+        updateOverlayPreviewScale(percent);
+    }
+
+    private void updateOverlayPreviewScale(int percent) {
+        if (overlayPreviewPanel == null || overlayPreviewStage == null) {
+            return;
+        }
+        float scale = clampOverlayScalePercent(percent) / 100f;
+        overlayPreviewPanel.setScaleX(scale);
+        overlayPreviewPanel.setScaleY(scale);
+        FrameLayout.LayoutParams panelLp = (FrameLayout.LayoutParams) overlayPreviewPanel.getLayoutParams();
+        panelLp.gravity = Gravity.CENTER;
+        overlayPreviewPanel.setLayoutParams(panelLp);
+
+        LinearLayout.LayoutParams stageLp = (LinearLayout.LayoutParams) overlayPreviewStage.getLayoutParams();
+        stageLp.height = Math.max(dp(210), Math.round(dp(260) * scale));
+        overlayPreviewStage.setLayoutParams(stageLp);
+    }
+
+    private void notifyOverlayScaleChanged() {
+        startOverlayService();
+        Intent intent = new Intent(ACTION_OVERLAY_SCALE_CHANGED);
+        intent.setPackage(getPackageName());
+        sendBroadcast(intent);
+    }
+
+    static int getOverlayScalePercent(android.content.Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREFS, MODE_PRIVATE);
+        return clampOverlayScalePercent(prefs.getInt(KEY_OVERLAY_SCALE_PERCENT, DEFAULT_OVERLAY_SCALE_PERCENT));
+    }
+
+    static float getOverlayScale(android.content.Context context) {
+        return getOverlayScalePercent(context) / 100f;
+    }
+
+    private static int clampOverlayScalePercent(int percent) {
+        return Math.max(MIN_OVERLAY_SCALE_PERCENT, Math.min(MAX_OVERLAY_SCALE_PERCENT, percent));
     }
 
     static String getTargetPackage(android.content.Context context) {

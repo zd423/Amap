@@ -4,7 +4,7 @@
 
 1. GitHub Actions 负责构建、签名 APK，并发布 GitHub Release。
 2. 树莓派 Debian arm64 只负责定时同步 GitHub Release 里的 APK、`release-update.json` 和 `CHANGELOG.md`。
-3. App 访问树莓派的 `/update.json`，查看更新详情并选择安装方式。
+3. App 访问树莓派的 `/update.json`，查看更新详情，并通过 Android `PackageInstaller` 提交安装。
 
 这样树莓派不需要安装 Android SDK，也不会遇到 arm64 无法运行 Android build-tools 的问题。
 
@@ -68,7 +68,7 @@ export GITHUB_TOKEN=你的GitHubToken
 - `HOST`: HTTP 监听地址，默认 `0.0.0.0`。
 - `PUBLIC_BASE_URL`: 对外访问根地址，例如 `https://example.com`。
 
-## 5. 手动同步一次 Release
+## 5. 手动同步 Release
 
 ```bash
 cd /opt/amap-companion/update_server
@@ -97,7 +97,7 @@ cd /opt/amap-companion/update_server
 HOST=0.0.0.0 PORT=8787 npm start
 ```
 
-浏览器或命令行检查：
+检查：
 
 ```bash
 curl http://127.0.0.1:8787/health
@@ -193,21 +193,15 @@ sudo systemctl start amap-companion-sync.service
 
 ## 8. App 更新流程
 
-App 点击“检查更新”后会：
+App 进入主界面后会自动检查更新；也可以点击“检查更新”手动检查。
 
 1. 请求服务器 `/update.json`。
 2. 比较本地 `versionCode` 和服务器 `versionCode`。
-3. 如果有新版本，先弹出更新详情，包括版本号和更新日志。
-4. 点击“更新”后选择安装方式。
+3. 如果有新版本，先弹出更新详情，包括版本号、APK 大小和更新日志。
+4. 点击“更新”后下载 APK、校验大小和 SHA-256。
+5. 通过 Android `PackageInstaller` 创建安装会话并提交安装请求。
 
-目前安装方式：
-
-- `pm install`: 下载 APK 后尝试写入 `/data/local/tmp/`，再执行 `pm install -r -d <路径>`。
-- `adb install`: 下载 APK 后尝试写入 `/data/local/tmp/`，再执行 `adb install -r -d <路径>`。
-- `系统安装器`: 调用系统安装界面，适合允许用户确认安装的设备。
-- `设备管理员`: 入口已预留，授权和静默安装代码暂未实现。
-
-注意：普通第三方应用不一定有权限写入 `/data/local/tmp/`，也不一定能执行 `pm install` / `adb install`。这取决于车机 ROM、root、系统签名、白名单或设备管理策略。
+如果系统要求用户确认安装，App 会打开系统确认界面。普通第三方应用是否允许安装未知来源 APK，取决于车机 ROM、系统设置、白名单或设备管理策略。
 
 ## 9. 返回格式
 

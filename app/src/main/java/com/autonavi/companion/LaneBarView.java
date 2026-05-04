@@ -15,6 +15,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 public class LaneBarView extends View {
+    private static final float FRAME_SCALE = 0.66f;
     private static final int STRAIGHT = 1;
     private static final int LEFT = 2;
     private static final int RIGHT = 3;
@@ -29,6 +30,7 @@ public class LaneBarView extends View {
     private int[] lanes = new int[]{15, 15, 15, 15};
     private boolean[] recommend = new boolean[]{true, true, true, true};
     private boolean cruiseLaneStyle = true;
+    private float iconScaleMultiplier = 1f;
 
     public LaneBarView(Context context) {
         super(context);
@@ -81,6 +83,11 @@ public class LaneBarView extends View {
         }
         setVisibility(VISIBLE);
         requestLayout();
+        invalidate();
+    }
+
+    public void setScaleMultiplier(float multiplier) {
+        iconScaleMultiplier = Math.max(0.5f, multiplier);
         invalidate();
     }
 
@@ -169,9 +176,9 @@ public class LaneBarView extends View {
             return false;
         }
 
-        float iconHeight = Math.min(getHeight() - dp(24), dp(32));
+        float iconHeight = Math.min(getHeight() - dp(4), dp(48) * iconScaleMultiplier);
         float iconWidth = iconHeight * bitmap.getWidth() / (float) bitmap.getHeight();
-        float maxWidth = width - dp(20);
+        float maxWidth = width - dp(2);
         if (iconWidth > maxWidth) {
             iconWidth = maxWidth;
             iconHeight = iconWidth * bitmap.getHeight() / (float) bitmap.getWidth();
@@ -495,7 +502,7 @@ public class LaneBarView extends View {
     }
 
     private int dp(int value) {
-        return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
+        return (int) (value * FRAME_SCALE * getResources().getDisplayMetrics().density + 0.5f);
     }
 
     private static final class LaneIcon {

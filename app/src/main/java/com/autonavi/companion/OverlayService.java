@@ -35,6 +35,8 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class OverlayService extends Service {
     private static final String TAG = "AmapCompanion";
@@ -44,6 +46,8 @@ public class OverlayService extends Service {
     private static final int KEY_TRAFFIC_LIGHT_COUNTDOWN = 60073;
     private static final long ALERT_TTL_MS = 5000L;
     private static final long LIGHT_TTL_MS = 4500L;
+    private static final Pattern CAMERA_LIGHT_PATTERN = Pattern.compile(
+            "CameraLightInfo\\{([^}]*)\\}");
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private WindowManager windowManager;
@@ -67,6 +71,7 @@ public class OverlayService extends Service {
     private String lastDetailedMode;
     private long alertUpdatedAt;
     private int navigationTurnDir = -1;
+    private float overlayScale = 2f;
 
     private final Runnable lanePoll = new Runnable() {
         @Override
@@ -144,6 +149,7 @@ public class OverlayService extends Service {
         filter.addAction("com.autonavi.amapauto.AUTO_WIDGET_UPDATE_CAMERA_INFO");
         filter.addAction("com.autonavi.amapauto.AUTO_WIDGET_UPDATE_TRAFFIC_LIGHT_INFO");
         filter.addAction("com.autonavi.amapauto.AUTO_WIDGET_UPDATE_CRUISE_TRAFFIC_LIGHT_INFO");
+        filter.addAction(MainActivity.ACTION_OVERLAY_SCALE_CHANGED);
         try {
             registerReceiver(receiver, filter);
         } catch (Throwable t) {
@@ -164,6 +170,7 @@ public class OverlayService extends Service {
             return;
         }
 
+        overlayScale = MainActivity.getOverlayScale(this);
         windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
         panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
@@ -177,7 +184,7 @@ public class OverlayService extends Service {
 
         modeText = new TextView(this);
         modeText.setTextColor(0xFFE8EAED);
-        modeText.setTextSize(13f);
+        modeText.setTextSize(sp(13f));
         modeText.setSingleLine(true);
         modeText.setGravity(Gravity.CENTER);
         modeText.setText("\u5f85\u63a5\u6536\u5bfc\u822a/\u5de1\u822a\u4fe1\u606f");
@@ -185,7 +192,7 @@ public class OverlayService extends Service {
 
         turnText = new TextView(this);
         turnText.setTextColor(Color.WHITE);
-        turnText.setTextSize(28f);
+        turnText.setTextSize(sp(28f));
         turnText.setTypeface(Typeface.DEFAULT_BOLD);
         turnText.setSingleLine(false);
         turnText.setMaxLines(2);
@@ -216,12 +223,13 @@ public class OverlayService extends Service {
         TextView laneTitle = new TextView(this);
         laneTitle.setText("\u8f66\u9053\u4fe1\u606f");
         laneTitle.setTextColor(0xFFBAE6FD);
-        laneTitle.setTextSize(11f);
+        laneTitle.setTextSize(sp(11f));
         laneTitle.setTypeface(Typeface.DEFAULT_BOLD);
         laneTitle.setGravity(Gravity.CENTER);
         laneSection.addView(laneTitle, new LinearLayout.LayoutParams(-2, -2));
         laneBar = new LaneBarView(this);
-        LinearLayout.LayoutParams laneLp = new LinearLayout.LayoutParams(-2, dp(54));
+        laneBar.setScaleMultiplier(1.5f);
+        LinearLayout.LayoutParams laneLp = new LinearLayout.LayoutParams(-2, -2);
         laneLp.setMargins(0, dp(2), 0, 0);
         laneSection.addView(laneBar, laneLp);
         LinearLayout.LayoutParams laneSectionLp = new LinearLayout.LayoutParams(-2, -2);
@@ -236,7 +244,7 @@ public class OverlayService extends Service {
 
         etaText = new TextView(this);
         etaText.setTextColor(0xFFE8EAED);
-        etaText.setTextSize(15f);
+        etaText.setTextSize(sp(15f));
         etaText.setSingleLine(false);
         etaText.setMaxLines(4);
         etaText.setGravity(Gravity.CENTER);
@@ -267,8 +275,8 @@ public class OverlayService extends Service {
                         | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
                 PixelFormat.TRANSLUCENT);
         params.gravity = Gravity.TOP | Gravity.LEFT;
-        params.x = dp(24);
-        params.y = dp(220);
+        params.x = rawDp(24);
+        params.y = rawDp(220);
 
         panel.setOnTouchListener((v, event) -> {
             switch (event.getActionMasked()) {
@@ -316,6 +324,35 @@ public class OverlayService extends Service {
         }
     }
 
+    private void rebuildOverlay() {
+        int oldX = params != null ? params.x : rawDp(24);
+        int oldY = params != null ? params.y : rawDp(220);
+        if (windowManager != null && panel != null && panel.getParent() != null) {
+            try {
+                windowManager.removeView(panel);
+            } catch (Throwable t) {
+                Log.e(TAG, "overlay remove for scale failed", t);
+            }
+        }
+        panel = null;
+        modeText = null;
+        turnText = null;
+        laneSection = null;
+        laneBar = null;
+        lightRow = null;
+        etaText = null;
+        alertText = null;
+        detailText = null;
+        ensureOverlay();
+        if (params != null) {
+            params.x = oldX;
+            params.y = oldY;
+            updateOverlayPosition();
+        }
+        requestLaneInfo();
+        requestTrafficLightInfo();
+    }
+
     private void openMainActivity() {
         try {
             Intent intent = new Intent(this, MainActivity.class);
@@ -331,6 +368,10 @@ public class OverlayService extends Service {
             return;
         }
         String action = intent.getAction();
+        if (MainActivity.ACTION_OVERLAY_SCALE_CHANGED.equals(action)) {
+            rebuildOverlay();
+            return;
+        }
         Bundle extras = intent.getExtras();
         Log.d(TAG, "recv action=" + action + " extras=" + describeExtras(extras));
         if (extras == null) {
@@ -345,7 +386,10 @@ public class OverlayService extends Service {
         updateProtocolDetails(extras);
 
         int keyType = intValue(extras, "KEY_TYPE", -1);
+        boolean trafficLightAction = action != null
+                && action.toLowerCase(java.util.Locale.US).contains("traffic_light");
         if (keyType == KEY_TRAFFIC_LIGHT_COUNTDOWN
+                || trafficLightAction
                 || extras.containsKey("trafficLightStatus")
                 || extras.containsKey("TRAFFIC_LIGHT_STATUS")
                 || extras.containsKey("traffic_light_status")
@@ -360,6 +404,11 @@ public class OverlayService extends Service {
                 || extras.containsKey("rightRedLightCountDownSeconds")
                 || extras.containsKey("trafficLights")
                 || extras.containsKey("trafficLightInfo")
+                || extras.containsKey("cameraLightInfo")
+                || extras.containsKey("cameraLightInfos")
+                || extras.containsKey("cameraLightInfoWrapper")
+                || extras.containsKey("cameraLights")
+                || extras.containsKey("lightInfos")
                 || extras.containsKey("dir")) {
             updateTrafficLights(extras);
         }
@@ -372,7 +421,7 @@ public class OverlayService extends Service {
     private TextView compactText(int color, float size) {
         TextView view = new TextView(this);
         view.setTextColor(color);
-        view.setTextSize(size);
+        view.setTextSize(sp(size));
         view.setSingleLine(false);
         view.setMaxLines(2);
         view.setGravity(Gravity.CENTER);
@@ -516,14 +565,16 @@ public class OverlayService extends Service {
             return;
         }
         HashMap<Integer, LightState> nextLights = new HashMap<>();
+        if (updateCruiseCameraTrafficLights(extras, nextLights)) {
+            applyTrafficLights(nextLights);
+            return;
+        }
         if (updateTrafficLightsFromJson(extras, nextLights)) {
-            replaceTrafficLights(nextLights);
-            renderTrafficLights();
+            applyTrafficLights(nextLights);
             return;
         }
         if (updateDirectionalTrafficLights(extras, nextLights)) {
-            replaceTrafficLights(nextLights);
-            renderTrafficLights();
+            applyTrafficLights(nextLights);
             return;
         }
         int[] dirs = intArrayValue(extras, "dir", "DIR", "dirs", "DIRECTIONS", "direction",
@@ -554,8 +605,7 @@ public class OverlayService extends Service {
                 putLightState(nextLights, key, dir, status, red, green, seconds);
             }
         }
-        replaceTrafficLights(nextLights);
-        renderTrafficLights();
+        applyTrafficLights(nextLights);
     }
 
     private boolean hasCountdownPayload(Bundle extras) {
@@ -565,13 +615,193 @@ public class OverlayService extends Service {
                 "greenLightLastSecond", "greenLightCountDownSeconds", "greenLightCountdownSeconds",
                 "greenSeconds", "greenCountDown", "greenCountdown", "GREEN_LIGHT_LAST_SECOND",
                 "dir", "direction", "trafficLightDir", "trafficLightDirection", "trafficLights",
-                "trafficLight", "trafficLightInfo", "trafficLightsCountdownInfo");
+                "trafficLight", "trafficLightInfo", "trafficLightsCountdownInfo", "cameraLightInfo",
+                "cameraLightInfos", "cameraLightInfoWrapper", "cameraLights", "lightInfos");
+    }
+
+    private void applyTrafficLights(HashMap<Integer, LightState> nextLights) {
+        if (inCruiseMode) {
+            mergeTrafficLights(nextLights);
+        } else {
+            replaceTrafficLights(nextLights);
+        }
+        renderTrafficLights();
+    }
+
+    private boolean updateCruiseCameraTrafficLights(Bundle extras, HashMap<Integer, LightState> target) {
+        boolean handled = false;
+        for (String key : extras.keySet()) {
+            Object value = safeExtra(extras, key);
+            if (value == null) {
+                continue;
+            }
+            String lowerKey = key == null ? "" : key.toLowerCase(java.util.Locale.US);
+            if (lowerKey.contains("cameralight") || lowerKey.contains("camera_light")
+                    || lowerKey.contains("lightinfos") || lowerKey.contains("light_infos")
+                    || String.valueOf(value).contains("CameraLightInfo{")) {
+                handled |= parseCameraLightValue(value, target);
+            }
+        }
+        return handled;
+    }
+
+    private boolean parseCameraLightValue(Object value, HashMap<Integer, LightState> target) {
+        if (value == null) {
+            return false;
+        }
+        if (value instanceof Bundle) {
+            return parseCameraLightBundle((Bundle) value, target);
+        }
+        if (value instanceof Iterable) {
+            boolean handled = false;
+            for (Object item : (Iterable<?>) value) {
+                handled |= parseCameraLightValue(item, target);
+            }
+            return handled;
+        }
+        Class<?> valueClass = value.getClass();
+        if (valueClass.isArray()) {
+            boolean handled = false;
+            int length = Array.getLength(value);
+            for (int i = 0; i < length; i++) {
+                handled |= parseCameraLightValue(Array.get(value, i), target);
+            }
+            return handled;
+        }
+        return parseCameraLightText(String.valueOf(value), target);
+    }
+
+    private boolean parseCameraLightBundle(Bundle bundle, HashMap<Integer, LightState> target) {
+        boolean handled = putCameraLightInfo(
+                intValue(bundle, "direction", intValue(bundle, "dir", intValue(bundle, "c", -1))),
+                intValue(bundle, "status", intValue(bundle, "trafficLightStatus", intValue(bundle, "d", -1))),
+                intValue(bundle, "countDown", intValue(bundle, "countdown",
+                        intValue(bundle, "redLightCountDownSeconds", intValue(bundle, "e", 0)))),
+                target);
+        for (String key : bundle.keySet()) {
+            Object value = safeExtra(bundle, key);
+            if (value != null && value != bundle) {
+                handled |= parseCameraLightValue(value, target);
+            }
+        }
+        return handled;
+    }
+
+    private boolean parseCameraLightText(String text, HashMap<Integer, LightState> target) {
+        if (TextUtils.isEmpty(text)) {
+            return false;
+        }
+        boolean handled = false;
+        Matcher matcher = CAMERA_LIGHT_PATTERN.matcher(text);
+        while (matcher.find()) {
+            handled |= parseCameraLightFields(matcher.group(1), target);
+        }
+        String trimmed = text.trim();
+        if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+            try {
+                if (trimmed.startsWith("[")) {
+                    JSONArray array = new JSONArray(trimmed);
+                    for (int i = 0; i < array.length(); i++) {
+                        JSONObject item = array.optJSONObject(i);
+                        if (item != null) {
+                            handled |= parseCameraLightObject(item, target);
+                        }
+                    }
+                } else {
+                    handled |= parseCameraLightObject(new JSONObject(trimmed), target);
+                }
+            } catch (Throwable t) {
+                Log.d(TAG, "camera light json parse skipped: " + text);
+            }
+        }
+        return handled;
+    }
+
+    private boolean parseCameraLightFields(String fields, HashMap<Integer, LightState> target) {
+        int dir = -1;
+        int status = -1;
+        int countDown = 0;
+        String[] parts = fields.split(",");
+        for (String part : parts) {
+            String[] pair = part.split("=", 2);
+            if (pair.length != 2) {
+                continue;
+            }
+            String name = pair[0].trim();
+            int value = parseInt(pair[1].trim(), Integer.MIN_VALUE);
+            if (value == Integer.MIN_VALUE) {
+                continue;
+            }
+            if ("direction".equals(name) || "dir".equals(name) || "c".equals(name)) {
+                dir = value;
+            } else if ("status".equals(name) || "trafficLightStatus".equals(name) || "d".equals(name)) {
+                status = value;
+            } else if ("countDown".equals(name) || "countdown".equals(name)
+                    || "redLightCountDownSeconds".equals(name) || "e".equals(name)) {
+                countDown = value;
+            }
+        }
+        return putCameraLightInfo(dir, status, countDown, target);
+    }
+
+    private boolean parseCameraLightObject(JSONObject object, HashMap<Integer, LightState> target) {
+        boolean handled = false;
+        JSONArray array = object.optJSONArray("cameraLightInfos");
+        if (array == null) {
+            array = object.optJSONArray("cameraLights");
+        }
+        if (array == null) {
+            array = object.optJSONArray("trafficLights");
+        }
+        if (array != null) {
+            for (int i = 0; i < array.length(); i++) {
+                JSONObject item = array.optJSONObject(i);
+                if (item != null) {
+                    handled |= parseCameraLightObject(item, target);
+                }
+            }
+        }
+        handled |= putCameraLightInfo(
+                object.optInt("direction", object.optInt("dir", object.optInt("c", -1))),
+                object.optInt("status", object.optInt("trafficLightStatus", object.optInt("d", -1))),
+                object.optInt("countDown", object.optInt("countdown",
+                        object.optInt("redLightCountDownSeconds", object.optInt("e", 0)))),
+                target);
+        return handled;
+    }
+
+    private boolean putCameraLightInfo(int cameraDir, int cameraStatus, int countDown,
+                                       HashMap<Integer, LightState> target) {
+        if (cameraDir < 0 || countDown <= 0) {
+            return false;
+        }
+        int dir = normalizeCruiseCameraDirection(cameraDir);
+        int status = cameraStatus == 1 ? 1 : 4;
+        putLightState(target, dir >= 0 ? dir : 999, dir, status,
+                status == 1 ? countDown : 0, status == 4 ? countDown : 0, countDown);
+        return true;
+    }
+
+    private int normalizeCruiseCameraDirection(int cameraDir) {
+        if (cameraDir == 0) {
+            return 0;
+        }
+        if (cameraDir == 1) {
+            return 1;
+        }
+        if (cameraDir == 2) {
+            return 4;
+        }
+        if (cameraDir == 3) {
+            return 2;
+        }
+        return cameraDir;
     }
 
     private boolean updateTrafficLightsFromJson(Bundle extras, HashMap<Integer, LightState> target) {
         boolean handled = false;
         for (String key : extras.keySet()) {
-            Object value = extras.get(key);
+            Object value = safeExtra(extras, key);
             if (value == null) {
                 continue;
             }
@@ -716,6 +946,16 @@ public class OverlayService extends Service {
         trafficLights.putAll(nextLights);
     }
 
+    private void mergeTrafficLights(HashMap<Integer, LightState> nextLights) {
+        for (Map.Entry<Integer, LightState> entry : nextLights.entrySet()) {
+            LightState old = trafficLights.get(entry.getKey());
+            LightState state = entry.getValue();
+            if (old == null || old.status != state.status || preferLightState(state, old)) {
+                trafficLights.put(entry.getKey(), state);
+            }
+        }
+    }
+
     private void renderTrafficLights() {
         long now = System.currentTimeMillis();
         Iterator<Map.Entry<Integer, LightState>> iterator = trafficLights.entrySet().iterator();
@@ -778,7 +1018,7 @@ public class OverlayService extends Service {
     private TextView lightPill(LightState state, boolean showDirectionLabel) {
         TextView view = new TextView(this);
         view.setTextColor(Color.WHITE);
-        view.setTextSize(20f);
+        view.setTextSize(sp(20f));
         view.setTypeface(Typeface.DEFAULT_BOLD);
         view.setGravity(Gravity.CENTER);
         view.setMinWidth(dp(inCruiseMode ? 62 : 54));
@@ -848,21 +1088,21 @@ public class OverlayService extends Service {
 
     private int colorForStatus(int status, int red, int green) {
         if (isYellowTailCountdown(red, green)) {
-            return 0xFFFFCC00;
+            return 0xFFD49A00;
         }
         if (isYellowLightStatus(status)) {
-            return 0xFFFFCC00;
+            return 0xFFD49A00;
         }
         if (isGreenLightStatus(status)) {
-            return 0xFF34C759;
+            return 0xFF1F8F45;
         }
         if (isRedLightStatus(status)) {
-            return 0xFFFF3B30;
+            return 0xFFC62828;
         }
         if (green > 0) {
-            return 0xFF34C759;
+            return 0xFF1F8F45;
         }
-        return 0xFFFFCC00;
+        return 0xFFD49A00;
     }
 
     private int secondsForLight(int status, int red, int green) {
@@ -920,6 +1160,21 @@ public class OverlayService extends Service {
     }
 
     private int directionPriority(int dir) {
+        if (inCruiseMode) {
+            if (dir == 4) {
+                return 10;
+            }
+            if (dir == 1 || dir == 5 || dir == 6) {
+                return 20;
+            }
+            if (dir == 2 || dir == 3 || dir == 7 || dir == 8) {
+                return 30;
+            }
+            if (dir == 0) {
+                return 40;
+            }
+            return 50 + dir;
+        }
         if (dir == 1 || dir == 5 || dir == 6) {
             return 10;
         }
@@ -1279,8 +1534,17 @@ public class OverlayService extends Service {
         return false;
     }
 
+    private Object safeExtra(Bundle extras, String key) {
+        try {
+            return extras.get(key);
+        } catch (Throwable t) {
+            Log.d(TAG, "skip unreadable extra " + key, t);
+            return null;
+        }
+    }
+
     private int intValue(Bundle extras, String key, int fallback) {
-        Object value = extras.get(key);
+        Object value = safeExtra(extras, key);
         if (value == null) {
             return fallback;
         }
@@ -1296,7 +1560,7 @@ public class OverlayService extends Service {
 
     private int[] intArrayValue(Bundle extras, String... keys) {
         for (String key : keys) {
-            Object value = extras.get(key);
+            Object value = safeExtra(extras, key);
             int[] parsed = parseIntArray(value);
             if (parsed != null && parsed.length > 0) {
                 return parsed;
@@ -1321,7 +1585,7 @@ public class OverlayService extends Service {
 
     private boolean[] booleanArrayValue(Bundle extras, String... keys) {
         for (String key : keys) {
-            Object value = extras.get(key);
+            Object value = safeExtra(extras, key);
             boolean[] parsed = parseBooleanArray(value);
             if (parsed != null && parsed.length > 0) {
                 return parsed;
@@ -1418,7 +1682,7 @@ public class OverlayService extends Service {
     }
 
     private boolean booleanValue(Bundle extras, String key, boolean fallback) {
-        Object value = extras.get(key);
+        Object value = safeExtra(extras, key);
         if (value == null) {
             return fallback;
         }
@@ -1436,7 +1700,7 @@ public class OverlayService extends Service {
     }
 
     private double doubleValue(Bundle extras, String key, double fallback) {
-        Object value = extras.get(key);
+        Object value = safeExtra(extras, key);
         if (value == null) {
             return fallback;
         }
@@ -1460,7 +1724,7 @@ public class OverlayService extends Service {
 
     private String valueString(Bundle extras, String... keys) {
         for (String key : keys) {
-            Object value = extras.get(key);
+            Object value = safeExtra(extras, key);
             if (value == null) {
                 continue;
             }
@@ -1582,7 +1846,7 @@ public class OverlayService extends Service {
         StringBuilder sb = new StringBuilder("{");
         for (int i = 0; i < keys.size(); i++) {
             String key = keys.get(i);
-            Object value = extras.get(key);
+            Object value = safeExtra(extras, key);
             if (i > 0) {
                 sb.append(", ");
             }
@@ -1618,7 +1882,19 @@ public class OverlayService extends Service {
     }
 
     private int dp(int value) {
+        return dp((float) value);
+    }
+
+    private int dp(float value) {
+        return (int) (value * overlayScale * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    private int rawDp(int value) {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    private float sp(float value) {
+        return value * overlayScale;
     }
 
     private static final class LightState {

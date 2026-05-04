@@ -35,7 +35,8 @@ function readManifest(req) {
   const sourcePath = fs.existsSync(manifestPath) ? manifestPath : manifestTemplatePath;
   const manifest = JSON.parse(fs.readFileSync(sourcePath, "utf8"));
   const apkPath = path.join(publicDir, manifest.apkPath || "apk/amap_companion_signed.apk");
-  const baseUrl = process.env.PUBLIC_BASE_URL || `http://${req.headers.host}`;
+  const scheme = req.headers["x-forwarded-proto"] === "https" ? "https" : "http";
+  const baseUrl = process.env.PUBLIC_BASE_URL || `${scheme}://${req.headers.host}`;
   if (fs.existsSync(apkPath)) {
     manifest.apkUrl = new URL(manifest.apkUrl || `/${path.relative(publicDir, apkPath).replace(/\\/g, "/")}`, baseUrl).toString();
     manifest.sha256 = manifest.sha256 || sha256(apkPath);
