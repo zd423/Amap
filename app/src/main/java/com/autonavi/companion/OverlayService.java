@@ -847,6 +847,9 @@ public class OverlayService extends Service {
     }
 
     private int colorForStatus(int status, int red, int green) {
+        if (green > 0 && green <= 3) {
+            return 0xFFFFCC00;
+        }
         if (isYellowLightStatus(status)) {
             return 0xFFFFCC00;
         }
@@ -855,9 +858,6 @@ public class OverlayService extends Service {
         }
         if (isRedLightStatus(status)) {
             return 0xFFFF3B30;
-        }
-        if (green > 0 && green <= 3) {
-            return 0xFFFFCC00;
         }
         if (green > 0) {
             return 0xFF34C759;
