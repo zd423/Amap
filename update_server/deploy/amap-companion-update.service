@@ -8,7 +8,7 @@ Type=simple
 WorkingDirectory=/opt/amap-companion/update_server
 Environment=HOST=0.0.0.0
 Environment=PORT=8787
-# Environment=PUBLIC_BASE_URL=http://your-pi:8787
+Environment=PUBLIC_BASE_URL=https://amap-companion.zuoqirun.top
 ExecStart=/usr/bin/node server.js
 Restart=always
 RestartSec=5

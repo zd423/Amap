@@ -6,6 +6,7 @@ const {spawn} = require("child_process");
 
 const host = process.env.HOST || "0.0.0.0";
 const port = Number(process.env.PORT || 8788);
+const defaultPublicBaseUrl = "https://amap-companion.zuoqirun.top";
 const autoSyncEnabled = process.env.AUTO_SYNC !== "0";
 const syncIntervalMs = Math.max(60_000, Number(process.env.SYNC_INTERVAL_MS || 300_000));
 const publicDir = path.join(__dirname, "public");
@@ -37,12 +38,20 @@ function sha256(filePath) {
   return hash.digest("hex");
 }
 
+function publicBaseUrl(req) {
+  const configured = process.env.PUBLIC_BASE_URL || defaultPublicBaseUrl;
+  if (configured) {
+    return configured.replace(/\/+$/, "");
+  }
+  const scheme = req.headers["x-forwarded-proto"] === "https" ? "https" : "http";
+  return `${scheme}://${req.headers.host}`;
+}
+
 function readManifest(req, channel = "server") {
   const sourcePath = fs.existsSync(manifestPath) ? manifestPath : manifestTemplatePath;
   const manifest = JSON.parse(fs.readFileSync(sourcePath, "utf8"));
   const apkPath = path.join(publicDir, manifest.apkPath || "apk/amap_companion_signed.apk");
-  const scheme = req.headers["x-forwarded-proto"] === "https" ? "https" : "http";
-  const baseUrl = process.env.PUBLIC_BASE_URL || `${scheme}://${req.headers.host}`;
+  const baseUrl = publicBaseUrl(req);
   const githubApkUrl = manifest.githubApkUrl || "";
   const githubChangelogUrl = manifest.githubChangelogUrl || "";
   if (channel === "github" && githubApkUrl) {
