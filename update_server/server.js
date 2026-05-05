@@ -69,6 +69,9 @@ function readManifest(req, channel = "server") {
   } else if (fs.existsSync(changelogPath)) {
     manifest.changelogUrl = new URL("/CHANGELOG.md", baseUrl).toString();
   }
+  if (fs.existsSync(changelogPath) && fs.statSync(changelogPath).isFile()) {
+    manifest.changelogText = fs.readFileSync(changelogPath, "utf8").trim();
+  }
   delete manifest.apkPath;
   delete manifest.githubApkUrl;
   delete manifest.githubChangelogUrl;

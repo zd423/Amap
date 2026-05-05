@@ -61,6 +61,8 @@ final class Updater {
         String changelogUrl = manifest.optString("changelogUrl", "");
         if (!TextUtils.isEmpty(changelogUrl)) {
             changelogUrl = resolveUrl(updateUrl, changelogUrl);
+        } else {
+            changelogUrl = defaultChangelogUrl(updateUrl);
         }
         String changelog = changelogText(manifest);
         if (!TextUtils.isEmpty(changelogUrl)) {
@@ -219,6 +221,10 @@ final class Updater {
         return base.buildUpon().path(value.startsWith("/") ? value : parentPath(base.getPath()) + value).build().toString();
     }
 
+    private static String defaultChangelogUrl(String updateUrl) {
+        return resolveUrl(updateUrl, "/CHANGELOG.md");
+    }
+
     private static String parentPath(String path) {
         if (TextUtils.isEmpty(path)) {
             return "/";
@@ -323,6 +329,14 @@ final class Updater {
     }
 
     private static String changelogText(JSONObject manifest) {
+        String direct = manifest.optString("changelogText", "");
+        if (!TextUtils.isEmpty(direct)) {
+            return direct;
+        }
+        Object raw = manifest.opt("changelog");
+        if (raw instanceof String && !TextUtils.isEmpty((String) raw)) {
+            return (String) raw;
+        }
         JSONArray array = manifest.optJSONArray("changelog");
         if (array == null || array.length() == 0) {
             return "";
