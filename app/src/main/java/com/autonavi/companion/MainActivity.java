@@ -62,6 +62,8 @@ public class MainActivity extends Activity {
     static final String DEFAULT_UPDATE_CHANNEL = UPDATE_CHANNEL_SERVER;
     static final String SERVER_UPDATE_URL = "https://amap-companion.zuoqirun.top/update.json";
     static final String GITHUB_UPDATE_URL = "https://amap-companion.zuoqirun.top/update-github.json";
+    static final String REPOSITORY_URL = "https://github.com/zuo-qirun/amap-companion";
+    static final String LICENSE_URL = "https://github.com/zuo-qirun/amap-companion/blob/master/LICENSE";
     static final String DEFAULT_UPDATE_URL = SERVER_UPDATE_URL;
     static final int MIN_OVERLAY_SCALE_PERCENT = 80;
     static final int MAX_OVERLAY_SCALE_PERCENT = 300;
@@ -147,8 +149,45 @@ public class MainActivity extends Activity {
         addOverlayScaleControls(controls);
         addClusterMirrorControls(controls);
         addOverlayContentControls(controls);
+        addOpenSourceSection(root);
 
         return scroll;
+    }
+
+    private void addOpenSourceSection(LinearLayout root) {
+        LinearLayout section = card(Color.WHITE);
+        LinearLayout.LayoutParams sectionLp = new LinearLayout.LayoutParams(-1, -2);
+        sectionLp.setMargins(0, dp(14), 0, 0);
+        root.addView(section, sectionLp);
+
+        TextView title = new TextView(this);
+        title.setText("\u5f00\u6e90\u4fe1\u606f");
+        title.setTextSize(16f);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setTextColor(0xFF111827);
+        section.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView repo = new TextView(this);
+        repo.setText("\u5f00\u6e90\u5730\u5740\n" + REPOSITORY_URL);
+        repo.setTextSize(13f);
+        repo.setTextColor(0xFF334155);
+        repo.setLineSpacing(dp(2), 1.0f);
+        repo.setTextIsSelectable(true);
+        LinearLayout.LayoutParams repoLp = new LinearLayout.LayoutParams(-1, -2);
+        repoLp.setMargins(0, dp(8), 0, 0);
+        section.addView(repo, repoLp);
+
+        TextView license = new TextView(this);
+        license.setText("\u5f00\u6e90\u8bb8\u53ef\u8bc1\nGNU GPL v3.0\n\u672c\u9879\u76ee\u6309 GPL v3.0 \u5f00\u6e90\u53d1\u5e03\uff0c\u53ef\u4ee5\u4f7f\u7528\u3001\u4fee\u6539\u548c\u5206\u53d1\uff0c\u4f46\u5206\u53d1\u4fee\u6539\u7248\u65f6\u9700\u7ee7\u7eed\u4ee5\u76f8\u540c\u8bb8\u53ef\u8bc1\u5f00\u6e90\uff0c\u5e76\u9644\u4e0a\u539f\u59cb\u8bb8\u53ef\u8bc1\u6587\u672c\u3002");
+        license.setTextSize(13f);
+        license.setTextColor(0xFF334155);
+        license.setLineSpacing(dp(2), 1.0f);
+        LinearLayout.LayoutParams licenseLp = new LinearLayout.LayoutParams(-1, -2);
+        licenseLp.setMargins(0, dp(10), 0, 0);
+        section.addView(license, licenseLp);
+
+        section.addView(button("\u6253\u5f00\u5f00\u6e90\u4ed3\u5e93", v -> openUrl(REPOSITORY_URL), 0xFF1D4ED8));
+        section.addView(button("\u67e5\u770b\u8bb8\u53ef\u8bc1", v -> openUrl(LICENSE_URL), 0xFF475569));
     }
 
     private void addOverlayScaleControls(LinearLayout parent) {
@@ -670,6 +709,15 @@ public class MainActivity extends Activity {
         Intent launch = getPackageManager().getLaunchIntentForPackage(getTargetPackage(this));
         if (launch != null) {
             startActivity(launch);
+        }
+    }
+
+    private void openUrl(String url) {
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            startActivity(intent);
+        } catch (Throwable t) {
+            Toast.makeText(this, "\u65e0\u6cd5\u6253\u5f00\u94fe\u63a5", Toast.LENGTH_SHORT).show();
         }
     }
 
