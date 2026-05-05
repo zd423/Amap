@@ -6,6 +6,12 @@
 update_server/public/CHANGELOG.md
 ```
 
+## 2026-05-05 更新日志体验优化
+
+- 更新弹窗现在显示面向用户的更新说明，不再把 VersionCode、Commit、BuiltAt 等构建信息当作更新日志展示。
+- GitHub Release 发布流程会自动提取本文件中的最新章节，生成客户端可读的 `CHANGELOG.md` 和 `release-update.json`。
+- 更新接口会内联完整更新说明，即使服务器没有直接代理 `/CHANGELOG.md`，App 也能显示完整日志内容。
+
 ## 2026-05-05
 
 - App 内新增“选择下载渠道”，支持在“服务器分发”和“GitHub 直连”之间切换，并持久化保存用户选择。

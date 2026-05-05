@@ -56,33 +56,43 @@ jobs:
       - name: Generate release metadata
         shell: bash
         run: |
-          changelog="$(git log -20 --pretty=format:'- %h %s')"
-          {
-            echo "# AMap Companion 更新日志"
-            echo
-            echo "## ${APP_VERSION_NAME}"
-            echo
-            echo "- VersionCode: ${APP_VERSION_CODE}"
-            echo "- Commit: ${GITHUB_SHA}"
-            echo "- BuiltAt: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            echo
-            echo "${changelog}"
-          } > CHANGELOG.md
           python3 - <<'PY'
           import json
           import os
           import pathlib
+          import re
+          import subprocess
 
-          changelog = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8").splitlines()
-          items = [line[2:] for line in changelog if line.startswith("- ") and not line.startswith("- VersionCode:") and not line.startswith("- Commit:") and not line.startswith("- BuiltAt:")]
+          source_path = pathlib.Path("CHANGELOG.md")
+          source = source_path.read_text(encoding="utf-8") if source_path.exists() else ""
+          match = re.search(r"(?ms)^##\s+(.+?)\s*$\n(.*?)(?=^##\s+|\Z)", source)
+          body = match.group(2).strip() if match else ""
+          if not body:
+              body = "- 优化应用体验。"
+
+          release_changelog = f"# AMap Companion 更新日志\n\n## {os.environ['APP_VERSION_NAME']}\n\n{body}\n"
+          release_dir = pathlib.Path("release")
+          release_dir.mkdir(exist_ok=True)
+          (release_dir / "CHANGELOG.md").write_text(release_changelog, encoding="utf-8")
+
+          items = []
+          for line in body.splitlines():
+              item = line.strip()
+              if item.startswith("- "):
+                  items.append(item[2:].strip())
+          if not items:
+              items = [body]
+
+          built_at = subprocess.check_output(["date", "-u", "+%Y-%m-%dT%H:%M:%SZ"], text=True).strip()
           data = {
               "packageName": "com.autonavi.companion",
               "versionCode": int(os.environ["APP_VERSION_CODE"]),
               "versionName": os.environ["APP_VERSION_NAME"],
               "force": False,
               "changelog": items,
+              "changelogText": release_changelog,
               "commit": os.environ["GITHUB_SHA"],
-              "builtAt": os.popen("date -u +%Y-%m-%dT%H:%M:%SZ").read().strip(),
+              "builtAt": built_at,
               "assetName": f"amap-companion-{os.environ['SHORT_SHA']}.apk"
           }
           pathlib.Path("release-update.json").write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -103,8 +113,8 @@ jobs:
           tag="apk-${APP_VERSION_CODE}-${SHORT_SHA}"
           apk_name="amap-companion-${SHORT_SHA}.apk"
           cp amap_companion_signed.apk "$apk_name"
-          gh release create "$tag" "$apk_name" release-update.json CHANGELOG.md \
+          gh release create "$tag" "$apk_name" release-update.json release/CHANGELOG.md \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "AMap Companion ${APP_VERSION_NAME}" \
-            --notes-file CHANGELOG.md
+            --notes-file release/CHANGELOG.md
