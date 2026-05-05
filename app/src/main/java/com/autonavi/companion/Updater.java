@@ -65,7 +65,7 @@ final class Updater {
             changelogUrl = defaultChangelogUrl(updateUrl);
         }
         String changelog = changelogText(manifest);
-        if (TextUtils.isEmpty(changelog) && !TextUtils.isEmpty(changelogUrl)) {
+        if (!TextUtils.isEmpty(changelogUrl)) {
             try {
                 String remoteChangelog = readText(changelogUrl).trim();
                 if (!TextUtils.isEmpty(remoteChangelog)) {
