@@ -5,7 +5,8 @@ const https = require("https");
 const path = require("path");
 const {execFileSync} = require("child_process");
 
-const githubRepo = process.env.GITHUB_REPO || detectGithubRepo();
+const defaultGithubRepo = "zuo-qirun/amap-companion";
+const githubRepo = process.env.GITHUB_REPO || detectGithubRepo() || defaultGithubRepo;
 const githubToken = process.env.GITHUB_TOKEN || "";
 const releaseTag = process.env.RELEASE_TAG || "latest";
 const assetPattern = new RegExp(process.env.ASSET_PATTERN || "\\.apk$");

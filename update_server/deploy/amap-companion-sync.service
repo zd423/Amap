@@ -8,8 +8,8 @@ Type=oneshot
 WorkingDirectory=/opt/amap-companion/update_server
 Environment=BRANCH=master
 Environment=REPO_DIR=/opt/amap-companion
-# Set this when the repo cannot be detected from git remote.
-# Environment=GITHUB_REPO=your-name/your-repo
+# Override this only if you fork the repository.
+Environment=GITHUB_REPO=zuo-qirun/amap-companion
 # Environment=GITHUB_TOKEN=ghp_xxx
 ExecStart=/usr/bin/node sync-build.js
 User=pi
