@@ -12,6 +12,7 @@ import android.content.pm.ResolveInfo;
 import android.hardware.display.DisplayManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
@@ -21,11 +22,16 @@ import android.provider.Settings;
 import android.text.TextUtils;
 import android.view.Display;
 import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.CompoundButton;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ListView;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.TextView;
@@ -895,15 +901,12 @@ public class MainActivity extends Activity {
         main.addCategory(Intent.CATEGORY_LAUNCHER);
         List<ResolveInfo> resolved = pm.queryIntentActivities(main, flags);
         HashSet<String> seen = new HashSet<>();
-        ArrayList<AppChoice> choices = new ArrayList<>();
+        ArrayList<AppChoice> allChoices = new ArrayList<>();
         for (ResolveInfo info : resolved) {
             if (info.activityInfo == null || info.activityInfo.packageName == null) {
                 continue;
             }
             String pkg = info.activityInfo.packageName;
-            if (!isAmapPackage(pkg)) {
-                continue;
-            }
             launcherPackages.add(pkg);
             if (pkg.equals(getPackageName())) {
                 continue;
@@ -913,48 +916,92 @@ public class MainActivity extends Activity {
             }
             ApplicationInfo appInfo = info.activityInfo.applicationInfo;
             String label = String.valueOf(appInfo.loadLabel(pm));
-            choices.add(new AppChoice(label, pkg, isSystemApp(appInfo), true));
+            allChoices.add(new AppChoice(label, pkg, isSystemApp(appInfo), true, isMapNamedApp(label), isAmapPackage(pkg)));
         }
         for (ApplicationInfo appInfo : pm.getInstalledApplications(flags)) {
             String pkg = appInfo.packageName;
-            if (pkg == null || !isAmapPackage(pkg) || pkg.equals(getPackageName()) || !seen.add(pkg)) {
+            if (pkg == null || pkg.equals(getPackageName()) || !seen.add(pkg)) {
                 continue;
             }
             String label = String.valueOf(appInfo.loadLabel(pm));
-            choices.add(new AppChoice(label, pkg, isSystemApp(appInfo), launcherPackages.contains(pkg)));
+            allChoices.add(new AppChoice(label, pkg, isSystemApp(appInfo), launcherPackages.contains(pkg), isMapNamedApp(label), isAmapPackage(pkg)));
         }
-        Collections.sort(choices, Comparator
-                .comparing((AppChoice a) -> a.system)
-                .thenComparing(a -> a.label.toLowerCase(java.util.Locale.CHINA))
-                .thenComparing(a -> a.packageName));
-        String[] labels = new String[choices.size()];
-        for (int i = 0; i < choices.size(); i++) {
-            AppChoice choice = choices.get(i);
-            String type = choice.system ? "\u7cfb\u7edf" : "\u7528\u6237";
-            String launch = choice.launchable ? "\u53ef\u6253\u5f00" : "\u65e0\u684c\u9762\u56fe\u6807";
-            labels[i] = choice.label + "  \u00b7  " + type + "  \u00b7  " + launch + "\n" + choice.packageName;
+        sortAppChoices(allChoices);
+        ArrayList<AppChoice> filteredChoices = new ArrayList<>();
+        for (AppChoice choice : allChoices) {
+            if (choice.mapNamed || choice.amapPackage) {
+                filteredChoices.add(choice);
+            }
         }
+        boolean fallbackToAll = filteredChoices.isEmpty();
+        ArrayList<AppChoice> choices = new ArrayList<>();
+        if (fallbackToAll) {
+            choices.addAll(allChoices);
+        } else {
+            choices.addAll(filteredChoices);
+        }
+        sortAppChoices(choices);
         if (choices.isEmpty()) {
-            choices.add(new AppChoice(DEFAULT_TARGET_PACKAGE, DEFAULT_TARGET_PACKAGE, false, false));
-            labels = new String[]{DEFAULT_TARGET_PACKAGE
-                    + "\n\u672a\u626b\u63cf\u5230 com.autonavi.* \u5e94\u7528\uff0c\u4f7f\u7528\u9ed8\u8ba4\u5305\u540d"};
+            choices.add(new AppChoice(DEFAULT_TARGET_PACKAGE, DEFAULT_TARGET_PACKAGE, false, false, false, true));
         }
-        new AlertDialog.Builder(this)
+        LinearLayout dialogContent = new LinearLayout(this);
+        dialogContent.setOrientation(LinearLayout.VERTICAL);
+        dialogContent.setPadding(dp(8), 0, dp(8), 0);
+        TextView hint = new TextView(this);
+        hint.setText(fallbackToAll
+                ? "\u672a\u627e\u5230 com.autonavi.* \u6216\u540d\u79f0\u5305\u542b\u201c\u5730\u56fe\u201d\u7684\u5e94\u7528\uff0c\u5df2\u663e\u793a\u6240\u6709\u53ef\u89c1\u5e94\u7528\u5305\u3002"
+                : "\u4f18\u5148\u663e\u793a com.autonavi.* \u5305\u540d\u6216\u540d\u79f0\u5305\u542b\u201c\u5730\u56fe\u201d\u7684\u5e94\u7528\u3002");
+        hint.setTextSize(13);
+        hint.setTextColor(0xFF4B5563);
+        hint.setPadding(dp(16), dp(6), dp(16), dp(10));
+        dialogContent.addView(hint, new LinearLayout.LayoutParams(-1, -2));
+        ListView listView = new ListView(this);
+        listView.setDivider(null);
+        TargetAppAdapter adapter = new TargetAppAdapter(choices);
+        listView.setAdapter(adapter);
+        dialogContent.addView(listView, new LinearLayout.LayoutParams(-1, Math.min(dp(520), getResources().getDisplayMetrics().heightPixels / 2)));
+        AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("\u9009\u62e9\u76ee\u6807\u5e94\u7528")
-                .setItems(labels, (dialog, which) -> {
-                    saveTargetPackage(choices.get(which).packageName);
-                    updateTargetText();
-                    startOverlayService();
-                })
-                .show();
+                .setNegativeButton("\u663e\u793a\u6240\u6709\u5e94\u7528", null)
+                .setView(dialogContent)
+                .create();
+        listView.setOnItemClickListener((parent, view, which, id) -> {
+            saveTargetPackage(choices.get(which).packageName);
+            updateTargetText();
+            startOverlayService();
+            dialog.dismiss();
+        });
+        dialog.show();
+        dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener(v -> {
+            choices.clear();
+            choices.addAll(allChoices);
+            if (choices.isEmpty()) {
+                choices.add(new AppChoice(DEFAULT_TARGET_PACKAGE, DEFAULT_TARGET_PACKAGE, false, false, false, true));
+            }
+            hint.setText("\u5df2\u663e\u793a\u6240\u6709\u53ef\u89c1\u5e94\u7528\u5305\u3002");
+            adapter.notifyDataSetChanged();
+        });
     }
 
     private boolean isSystemApp(ApplicationInfo appInfo) {
         return (appInfo.flags & (ApplicationInfo.FLAG_SYSTEM | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0;
     }
 
+    private void sortAppChoices(ArrayList<AppChoice> choices) {
+        Collections.sort(choices, Comparator
+                .comparing((AppChoice a) -> !a.amapPackage)
+                .thenComparing(a -> !a.mapNamed)
+                .thenComparing(a -> a.system)
+                .thenComparing(a -> a.label.toLowerCase(java.util.Locale.CHINA))
+                .thenComparing(a -> a.packageName));
+    }
+
     private boolean isAmapPackage(String packageName) {
         return packageName != null && packageName.startsWith(TARGET_PACKAGE_PREFIX);
+    }
+
+    private boolean isMapNamedApp(String label) {
+        return label != null && label.contains("\u5730\u56fe");
     }
 
     private void startOverlayService() {
@@ -1768,17 +1815,125 @@ public class MainActivity extends Activity {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
     }
 
+    private final class TargetAppAdapter extends BaseAdapter {
+        private final ArrayList<AppChoice> choices;
+
+        TargetAppAdapter(ArrayList<AppChoice> choices) {
+            this.choices = choices;
+        }
+
+        @Override
+        public int getCount() {
+            return choices.size();
+        }
+
+        @Override
+        public Object getItem(int position) {
+            return choices.get(position);
+        }
+
+        @Override
+        public long getItemId(int position) {
+            return position;
+        }
+
+        @Override
+        public View getView(int position, View convertView, ViewGroup parent) {
+            AppChoice choice = choices.get(position);
+            LinearLayout root = new LinearLayout(MainActivity.this);
+            root.setOrientation(LinearLayout.HORIZONTAL);
+            root.setGravity(Gravity.CENTER_VERTICAL);
+            root.setPadding(dp(18), dp(12), dp(18), dp(12));
+
+            ImageView icon = new ImageView(MainActivity.this);
+            icon.setImageDrawable(loadAppIcon(choice.packageName));
+            icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+            LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(dp(46), dp(46));
+            iconLp.setMargins(0, 0, dp(14), 0);
+            root.addView(icon, iconLp);
+
+            LinearLayout content = new LinearLayout(MainActivity.this);
+            content.setOrientation(LinearLayout.VERTICAL);
+            root.addView(content, new LinearLayout.LayoutParams(0, -2, 1f));
+
+            TextView title = new TextView(MainActivity.this);
+            title.setText(choice.label);
+            title.setTextSize(16);
+            title.setTypeface(Typeface.DEFAULT_BOLD);
+            title.setTextColor(0xFF111827);
+            title.setSingleLine(true);
+            title.setEllipsize(TextUtils.TruncateAt.END);
+            content.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+            TextView packageView = new TextView(MainActivity.this);
+            packageView.setText(choice.packageName);
+            packageView.setTextSize(12);
+            packageView.setTextColor(0xFF6B7280);
+            packageView.setSingleLine(true);
+            packageView.setEllipsize(TextUtils.TruncateAt.MIDDLE);
+            LinearLayout.LayoutParams pkgLp = new LinearLayout.LayoutParams(-1, -2);
+            pkgLp.setMargins(0, dp(4), 0, 0);
+            content.addView(packageView, pkgLp);
+
+            LinearLayout tags = new LinearLayout(MainActivity.this);
+            tags.setOrientation(LinearLayout.HORIZONTAL);
+            LinearLayout.LayoutParams tagsLp = new LinearLayout.LayoutParams(-1, -2);
+            tagsLp.setMargins(0, dp(8), 0, 0);
+            content.addView(tags, tagsLp);
+
+            tags.addView(appTag(choice.amapPackage ? "\u9ad8\u5fb7\u5305\u540d" : (choice.mapNamed ? "\u5730\u56fe\u5339\u914d" : "\u5168\u90e8\u5217\u8868"),
+                    choice.amapPackage ? 0xFFEFF6FF : (choice.mapNamed ? 0xFFECFDF5 : 0xFFF3F4F6),
+                    choice.amapPackage ? 0xFF1D4ED8 : (choice.mapNamed ? 0xFF047857 : 0xFF4B5563)));
+            tags.addView(appTag(choice.system ? "\u7cfb\u7edf\u5e94\u7528" : "\u7528\u6237\u5e94\u7528",
+                    choice.system ? 0xFFFFF7ED : 0xFFEFF6FF,
+                    choice.system ? 0xFFC2410C : 0xFF1D4ED8));
+            tags.addView(appTag(choice.launchable ? "\u53ef\u6253\u5f00" : "\u65e0\u684c\u9762\u56fe\u6807",
+                    choice.launchable ? 0xFFF0FDFA : 0xFFFEF2F2,
+                    choice.launchable ? 0xFF0F766E : 0xFFB91C1C));
+            return root;
+        }
+
+        private Drawable loadAppIcon(String packageName) {
+            try {
+                return getPackageManager().getApplicationIcon(packageName);
+            } catch (Exception ignored) {
+                return getResources().getDrawable(android.R.drawable.sym_def_app_icon);
+            }
+        }
+
+        private TextView appTag(String text, int backgroundColor, int textColor) {
+            TextView tag = new TextView(MainActivity.this);
+            tag.setText(text);
+            tag.setTextSize(11);
+            tag.setTextColor(textColor);
+            tag.setTypeface(Typeface.DEFAULT_BOLD);
+            tag.setPadding(dp(8), dp(3), dp(8), dp(3));
+            GradientDrawable background = new GradientDrawable();
+            background.setColor(backgroundColor);
+            background.setCornerRadius(dp(999));
+            tag.setBackground(background);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+            lp.setMargins(0, 0, dp(6), 0);
+            tag.setLayoutParams(lp);
+            return tag;
+        }
+    }
+
     private static final class AppChoice {
         final String label;
         final String packageName;
         final boolean system;
         final boolean launchable;
+        final boolean mapNamed;
+        final boolean amapPackage;
 
-        AppChoice(String label, String packageName, boolean system, boolean launchable) {
+        AppChoice(String label, String packageName, boolean system, boolean launchable, boolean mapNamed, boolean amapPackage) {
             this.label = label;
             this.packageName = packageName;
             this.system = system;
             this.launchable = launchable;
+            this.mapNamed = mapNamed;
+            this.amapPackage = amapPackage;
         }
     }
 
