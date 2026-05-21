@@ -88,7 +88,7 @@ public class MainActivity extends Activity {
     static final String TEXT_MODE_AUTO = "auto";
     static final String OVERLAY_UI_OLD = "old";
     static final String OVERLAY_UI_NEW = "new";
-    static final int MIN_BACKGROUND_OPACITY_PERCENT = 15;
+    static final int MIN_BACKGROUND_OPACITY_PERCENT = 0;
     static final int MAX_BACKGROUND_OPACITY_PERCENT = 90;
     static final int DEFAULT_BACKGROUND_OPACITY_PERCENT = 90;
     static final int MIN_OVERLAY_SCALE_PERCENT = 80;
@@ -166,6 +166,8 @@ public class MainActivity extends Activity {
         hero.addView(updateText, updateLp);
         updateUpdateText("\u66f4\u65b0\u6e20\u9053\n" + displayUpdateUrl());
 
+        addAnnouncementSection(root);
+
         LinearLayout contentArea = new LinearLayout(this);
         contentArea.setOrientation(wideLayout ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
         LinearLayout.LayoutParams contentLp = new LinearLayout.LayoutParams(-1, -2);
@@ -231,6 +233,29 @@ public class MainActivity extends Activity {
         parent.addView(button("\u6253\u5f00\u76ee\u6807\u5e94\u7528", v -> openTargetApp(), 0xFF111827));
         parent.addView(button("\u9009\u62e9\u4e0b\u8f7d\u6e20\u9053", v -> chooseUpdateChannel(), 0xFF334155));
         parent.addView(button("\u68c0\u67e5\u66f4\u65b0", v -> checkForUpdates(true), 0xFF059669));
+    }
+
+    private void addAnnouncementSection(LinearLayout root) {
+        LinearLayout section = card(Color.WHITE);
+        LinearLayout.LayoutParams sectionLp = new LinearLayout.LayoutParams(-1, -2);
+        sectionLp.setMargins(0, dp(14), 0, 0);
+        root.addView(section, sectionLp);
+
+        TextView title = new TextView(this);
+        title.setText("\u516c\u544a");
+        title.setTextSize(16f);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setTextColor(0xFF111827);
+        section.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView body = new TextView(this);
+        body.setText("\u53cd\u9988/\u4ea4\u6d41\u7fa4 QQ\u7fa4\uff1a1106923186");
+        body.setTextSize(14f);
+        body.setTextColor(0xFF334155);
+        body.setTextIsSelectable(true);
+        LinearLayout.LayoutParams bodyLp = new LinearLayout.LayoutParams(-1, -2);
+        bodyLp.setMargins(0, dp(8), 0, 0);
+        section.addView(body, bodyLp);
     }
 
     private void addOpenSourceSection(LinearLayout root, boolean compactTopMargin) {
@@ -1333,7 +1358,7 @@ public class MainActivity extends Activity {
         bg.setCornerRadius(dp(7));
         int opacity = getBackgroundOpacityPercent(this);
         bg.setColor(withAlpha(0xFF111827, opacity));
-        bg.setStroke(dp(1), withAlpha(0xFFFFFFFF, Math.max(8, Math.round(opacity * 0.18f))));
+        bg.setStroke(dp(1), withAlpha(0xFFFFFFFF, strokeOpacityForBackground(opacity)));
         return bg;
     }
 
@@ -1722,6 +1747,10 @@ public class MainActivity extends Activity {
 
     private static int clampBackgroundOpacityPercent(int percent) {
         return Math.max(MIN_BACKGROUND_OPACITY_PERCENT, Math.min(MAX_BACKGROUND_OPACITY_PERCENT, percent));
+    }
+
+    static int strokeOpacityForBackground(int opacityPercent) {
+        return opacityPercent <= 0 ? 0 : Math.max(8, Math.round(opacityPercent * 0.18f));
     }
 
     private static int withAlpha(int color, int alphaPercent) {

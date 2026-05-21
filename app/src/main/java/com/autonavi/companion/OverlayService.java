@@ -1460,7 +1460,7 @@ public class OverlayService extends Service {
         bg.setCornerRadius(dp(14));
         int opacity = MainActivity.getBackgroundOpacityPercent(this);
         bg.setColor(withAlpha(0xFF111827, opacity));
-        bg.setStroke(dp(1), withAlpha(0xFFFFFFFF, Math.max(8, Math.round(opacity * 0.18f))));
+        bg.setStroke(dp(1), withAlpha(0xFFFFFFFF, MainActivity.strokeOpacityForBackground(opacity)));
         return bg;
     }
 
@@ -1469,7 +1469,7 @@ public class OverlayService extends Service {
         bg.setCornerRadius(clusterDp(14));
         int opacity = MainActivity.getBackgroundOpacityPercent(this);
         bg.setColor(withAlpha(0xFF111827, opacity));
-        bg.setStroke(clusterDp(1), withAlpha(0xFFFFFFFF, Math.max(8, Math.round(opacity * 0.18f))));
+        bg.setStroke(clusterDp(1), withAlpha(0xFFFFFFFF, MainActivity.strokeOpacityForBackground(opacity)));
         return bg;
     }
 
