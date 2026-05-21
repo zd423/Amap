@@ -1,8 +1,11 @@
 package com.autonavi.companion;
 
+import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.AppOpsManager;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -17,6 +20,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Process;
 import android.provider.Settings;
 import android.text.TextUtils;
@@ -40,8 +44,17 @@ import android.widget.Toast;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 
 public class MainActivity extends Activity {
     static final String PREFS = "amap_companion";
@@ -101,6 +114,7 @@ public class MainActivity extends Activity {
     static final int MAX_OVERLAY_SCALE_PERCENT = 300;
     static final int DEFAULT_OVERLAY_SCALE_PERCENT = 200;
     private static final String TARGET_PACKAGE_PREFIX = "com.autonavi.";
+    private static final int REQUEST_LOG_PERMISSIONS = 7001;
 
     private TextView targetText;
     private TextView updateText;
@@ -229,6 +243,9 @@ public class MainActivity extends Activity {
             addButtonPair(parent,
                     button("\u9009\u62e9\u4e0b\u8f7d\u6e20\u9053", v -> chooseUpdateChannel(), 0xFF334155),
                     button("\u68c0\u67e5\u66f4\u65b0", v -> checkForUpdates(true), 0xFF059669));
+            addButtonPair(parent,
+                    button("\u67e5\u770b/\u4fdd\u5b58\u65e5\u5fd7", v -> showLogcatDialog(), 0xFF4F46E5),
+                    null);
             return;
         }
         parent.addView(button("\u9009\u62e9\u76ee\u6807\u5e94\u7528", v -> chooseTargetApp(), 0xFF2563EB));
@@ -239,6 +256,7 @@ public class MainActivity extends Activity {
         parent.addView(button("\u6253\u5f00\u76ee\u6807\u5e94\u7528", v -> openTargetApp(), 0xFF111827));
         parent.addView(button("\u9009\u62e9\u4e0b\u8f7d\u6e20\u9053", v -> chooseUpdateChannel(), 0xFF334155));
         parent.addView(button("\u68c0\u67e5\u66f4\u65b0", v -> checkForUpdates(true), 0xFF059669));
+        parent.addView(button("\u67e5\u770b/\u4fdd\u5b58\u65e5\u5fd7", v -> showLogcatDialog(), 0xFF4F46E5));
     }
 
     private void addAnnouncementSection(LinearLayout root) {
@@ -1103,6 +1121,291 @@ public class MainActivity extends Activity {
         } catch (Throwable t) {
             Toast.makeText(this, "\u65e0\u6cd5\u6253\u5f00\u94fe\u63a5", Toast.LENGTH_SHORT).show();
         }
+    }
+
+    private void showLogcatDialog() {
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(8), 0, dp(8), 0);
+
+        TextView hint = new TextView(this);
+        hint.setText("\u53cd\u9988 bug \u65f6\u53ef\u63d0\u4ea4\u65e5\u5fd7\u3002\u4f18\u5148\u4fdd\u5b58\u5230 /sdcard/amap_log\uff1b\u82e5\u7cfb\u7edf\u4e0d\u6388\u6743\uff0c\u4f1a\u81ea\u52a8\u56de\u9000\u5230\u5e94\u7528\u79c1\u6709\u65e5\u5fd7\u76ee\u5f55\u3002");
+        hint.setTextSize(13);
+        hint.setTextColor(0xFF4B5563);
+        hint.setPadding(dp(16), dp(6), dp(16), dp(10));
+        content.addView(hint, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView logText = new TextView(this);
+        logText.setTextSize(11);
+        logText.setTextColor(0xFF111827);
+        logText.setTypeface(Typeface.MONOSPACE);
+        logText.setTextIsSelectable(true);
+        logText.setLineSpacing(0, 1.05f);
+        logText.setPadding(dp(10), dp(10), dp(10), dp(10));
+        GradientDrawable logBg = new GradientDrawable();
+        logBg.setColor(0xFFF8FAFC);
+        logBg.setStroke(dp(1), 0xFFE2E8F0);
+        logBg.setCornerRadius(dp(8));
+        logText.setBackground(logBg);
+        ScrollView logScroll = new ScrollView(this);
+        logScroll.addView(logText, new ScrollView.LayoutParams(-1, -2));
+        content.addView(logScroll, new LinearLayout.LayoutParams(-1, Math.min(dp(520), getResources().getDisplayMetrics().heightPixels / 2)));
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setWeightSum(4f);
+        content.addView(actions, new LinearLayout.LayoutParams(-1, -2));
+
+        Button grant = compactDialogButton("\u6388\u6743");
+        Button refresh = compactDialogButton("\u5237\u65b0");
+        Button save = compactDialogButton("\u4fdd\u5b58");
+        Button copy = compactDialogButton("\u590d\u5236");
+        actions.addView(grant, new LinearLayout.LayoutParams(0, dp(42), 1f));
+        actions.addView(refresh, new LinearLayout.LayoutParams(0, dp(42), 1f));
+        actions.addView(save, new LinearLayout.LayoutParams(0, dp(42), 1f));
+        actions.addView(copy, new LinearLayout.LayoutParams(0, dp(42), 1f));
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("\u65e5\u5fd7\u4e0e\u8c03\u8bd5")
+                .setView(content)
+                .setPositiveButton("\u5173\u95ed", null)
+                .create();
+
+        grant.setOnClickListener(v -> requestLogAndStoragePermissions(true));
+        refresh.setOnClickListener(v -> refreshLogcat(logText, logScroll));
+        save.setOnClickListener(v -> saveLogText(String.valueOf(logText.getText())));
+        copy.setOnClickListener(v -> copyLogText(String.valueOf(logText.getText())));
+        dialog.setOnShowListener(d -> {
+            requestLogAndStoragePermissions(false);
+            refreshLogcat(logText, logScroll);
+        });
+        dialog.show();
+    }
+
+    private Button compactDialogButton(String text) {
+        Button b = new Button(this);
+        b.setText(text);
+        b.setAllCaps(false);
+        b.setTextSize(13);
+        b.setTextColor(0xFF1F2937);
+        return b;
+    }
+
+    private void requestLogAndStoragePermissions(boolean openSettings) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            ArrayList<String> permissions = new ArrayList<>();
+            if (checkSelfPermission(Manifest.permission.READ_LOGS) != PackageManager.PERMISSION_GRANTED) {
+                permissions.add(Manifest.permission.READ_LOGS);
+            }
+            if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P
+                    && checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE);
+            }
+            if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2
+                    && checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE);
+            }
+            if (!permissions.isEmpty()) {
+                try {
+                    requestPermissions(permissions.toArray(new String[0]), REQUEST_LOG_PERMISSIONS);
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+        if (openSettings && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
+            try {
+                Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
+                intent.setData(Uri.parse("package:" + getPackageName()));
+                startActivity(intent);
+            } catch (Throwable t) {
+                try {
+                    startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION));
+                } catch (Throwable ignored) {
+                    Toast.makeText(this, "\u65e0\u6cd5\u6253\u5f00\u6240\u6709\u6587\u4ef6\u8bbf\u95ee\u6743\u9650\u8bbe\u7f6e", Toast.LENGTH_SHORT).show();
+                }
+            }
+            Toast.makeText(this, "\u8bf7\u5f00\u542f\u201c\u6240\u6709\u6587\u4ef6\u8bbf\u95ee\u6743\u9650\u201d\uff0c\u7528\u4e8e\u4fdd\u5b58\u5230 /sdcard/amap_log", Toast.LENGTH_LONG).show();
+        } else if (openSettings) {
+            Toast.makeText(this, logPermissionSummary(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void refreshLogcat(TextView logText, ScrollView logScroll) {
+        logText.setText("\u6b63\u5728\u8bfb\u53d6 logcat...");
+        new Thread(() -> {
+            String text = collectLogcat();
+            runOnUiThread(() -> {
+                logText.setText(text);
+                logScroll.post(() -> logScroll.fullScroll(View.FOCUS_DOWN));
+            });
+        }, "amap-logcat-reader").start();
+    }
+
+    private String collectLogcat() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("AMap Companion log report\n");
+        sb.append("time=").append(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.CHINA).format(new Date())).append('\n');
+        sb.append("package=").append(getPackageName()).append('\n');
+        sb.append("version=").append(currentVersionName()).append(" (").append(currentVersionCode()).append(")\n");
+        sb.append("targetPackage=").append(getTargetPackage(this)).append('\n');
+        sb.append("android=").append(Build.VERSION.RELEASE).append(" sdk=").append(Build.VERSION.SDK_INT).append('\n');
+        sb.append("readLogsPermission=").append(hasPermission(Manifest.permission.READ_LOGS)).append('\n');
+        sb.append("publicLogDirWritable=").append(canWritePublicLogDir()).append('\n');
+        sb.append("preferredLogDir=/sdcard/amap_log\n");
+        sb.append("note=Android may restrict third-party apps to their own logs only.\n\n");
+        int lines = appendLogcatCommand(sb, "filtered", new String[]{
+                "logcat", "-d", "-v", "time", "-t", "1000",
+                "AmapCompanion:D", "AndroidRuntime:E", "System.err:W", "*:S"
+        });
+        if (lines == 0) {
+            lines = appendLogcatCommand(sb, "recent", new String[]{
+                    "logcat", "-d", "-v", "time", "-t", "300"
+            });
+        }
+        if (lines == 0) {
+            sb.append("\n(no logcat output; system may restrict log access or logs may be empty)\n");
+        }
+        return sb.toString();
+    }
+
+    private String currentVersionName() {
+        try {
+            return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Throwable t) {
+            return "unknown";
+        }
+    }
+
+    private long currentVersionCode() {
+        try {
+            android.content.pm.PackageInfo info = getPackageManager().getPackageInfo(getPackageName(), 0);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                return info.getLongVersionCode();
+            }
+            return info.versionCode;
+        } catch (Throwable t) {
+            return -1;
+        }
+    }
+
+    private int appendLogcatCommand(StringBuilder sb, String label, String[] command) {
+        sb.append("---- logcat ").append(label).append(" ----\n");
+        java.lang.Process process = null;
+        int lines = 0;
+        try {
+            process = Runtime.getRuntime().exec(command);
+            lines = appendStream(sb, process.getInputStream());
+            int exit = process.waitFor();
+            StringBuilder err = new StringBuilder();
+            appendStream(err, process.getErrorStream());
+            if (err.length() > 0) {
+                sb.append("\n---- logcat stderr ----\n").append(err);
+            }
+            sb.append("\n---- logcat ").append(label).append(" exit=").append(exit).append(" lines=").append(lines).append(" ----\n");
+        } catch (Throwable t) {
+            sb.append("\nlogcat failed: ").append(t.getClass().getSimpleName()).append(": ").append(t.getMessage()).append('\n');
+        } finally {
+            if (process != null) {
+                process.destroy();
+            }
+        }
+        return lines;
+    }
+
+    private int appendStream(StringBuilder sb, InputStream stream) throws Exception {
+        BufferedReader reader = new BufferedReader(new InputStreamReader(stream));
+        String line;
+        int lines = 0;
+        while ((line = reader.readLine()) != null) {
+            sb.append(line).append('\n');
+            lines++;
+        }
+        return lines;
+    }
+
+    private void saveLogText(String text) {
+        try {
+            File dir = resolveWritableLogDir();
+            String name = "amap_companion_log_" + new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.CHINA).format(new Date()) + ".txt";
+            File out = new File(dir, name);
+            OutputStreamWriter writer = new OutputStreamWriter(new FileOutputStream(out), "UTF-8");
+            try {
+                writer.write(text);
+            } finally {
+                writer.close();
+            }
+            Toast.makeText(this, "\u65e5\u5fd7\u5df2\u4fdd\u5b58\uff1a" + out.getAbsolutePath() + "\n\u53cd\u9988 bug \u65f6\u53ef\u63d0\u4ea4\u8be5\u6587\u4ef6", Toast.LENGTH_LONG).show();
+        } catch (Throwable t) {
+            Toast.makeText(this, "\u4fdd\u5b58\u65e5\u5fd7\u5931\u8d25\uff1a" + t.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private File resolveWritableLogDir() throws Exception {
+        File primary = new File(Environment.getExternalStorageDirectory(), "amap_log");
+        if (ensureWritableDir(primary)) {
+            return primary;
+        }
+        File fallback = getExternalFilesDir("logs");
+        if (fallback == null) {
+            fallback = new File(getCacheDir(), "logs");
+        }
+        if (ensureWritableDir(fallback)) {
+            Toast.makeText(this, "\u65e0\u6cd5\u5199\u5165 /sdcard/amap_log\uff0c\u5df2\u56de\u9000\u5230\uff1a" + fallback.getAbsolutePath(), Toast.LENGTH_LONG).show();
+            return fallback;
+        }
+        throw new IllegalStateException("no writable log dir");
+    }
+
+    private boolean ensureWritableDir(File dir) {
+        try {
+            if (!dir.exists() && !dir.mkdirs()) {
+                return false;
+            }
+            File probe = new File(dir, ".write_test");
+            FileOutputStream out = new FileOutputStream(probe);
+            try {
+                out.write(1);
+            } finally {
+                out.close();
+            }
+            if (probe.exists()) {
+                probe.delete();
+            }
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    private boolean canWritePublicLogDir() {
+        return ensureWritableDir(new File(Environment.getExternalStorageDirectory(), "amap_log"));
+    }
+
+    private boolean hasPermission(String permission) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return true;
+        }
+        try {
+            return checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    private String logPermissionSummary() {
+        String storage = canWritePublicLogDir() ? "/sdcard/amap_log \u53ef\u5199" : "/sdcard/amap_log \u4e0d\u53ef\u5199\uff0c\u4f1a\u56de\u9000\u5230\u5e94\u7528\u79c1\u6709\u76ee\u5f55";
+        String logs = hasPermission(Manifest.permission.READ_LOGS) ? "READ_LOGS \u5df2\u6388\u6743" : "READ_LOGS \u672a\u6388\u6743\uff0c\u666e\u901a\u7cfb\u7edf\u53ef\u80fd\u4ec5\u8fd4\u56de\u672c\u5e94\u7528\u65e5\u5fd7";
+        return storage + "\n" + logs;
+    }
+
+    private void copyLogText(String text) {
+        ClipboardManager manager = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        if (manager == null) {
+            Toast.makeText(this, "\u590d\u5236\u5931\u8d25", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        manager.setPrimaryClip(ClipData.newPlainText("AMap Companion log", text));
+        Toast.makeText(this, "\u65e5\u5fd7\u5df2\u590d\u5236", Toast.LENGTH_SHORT).show();
     }
 
     private void chooseDownloadSource(String title, String githubUrl, String mirrorUrl) {
