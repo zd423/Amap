@@ -80,6 +80,7 @@ public class OverlayService extends Service {
     private TextView turnText;
     private TextView turnDistanceText;
     private LinearLayout laneSection;
+    private TextView laneTitleText;
     private LaneBarView laneBar;
     private LinearLayout lightRow;
     private TextView etaText;
@@ -103,6 +104,7 @@ public class OverlayService extends Service {
     private TextView clusterTurnText;
     private TextView clusterTurnDistanceText;
     private LinearLayout clusterLaneSection;
+    private TextView clusterLaneTitleText;
     private LaneBarView clusterLaneBar;
     private LinearLayout clusterLightRow;
     private TextView clusterEtaText;
@@ -316,8 +318,7 @@ public class OverlayService extends Service {
         if (windowManager == null || panel == null || params == null) {
             return;
         }
-        boolean enabled = (MainActivity.isMainOverlayEnabled(this)
-                || shouldShowMainOverlayForTargetForeground())
+        boolean enabled = MainActivity.isMainOverlayEnabled(this)
                 && !shouldHideMainOverlayForTargetForeground();
         boolean attached = panel.getParent() != null;
         if (enabled && !attached) {
@@ -515,11 +516,19 @@ public class OverlayService extends Service {
         laneBox.setBackground(laneBg);
         laneBox.setVisibility(View.GONE);
 
+        TextView laneTitle = new TextView(context);
+        laneTitle.setText("车道信息");
+        laneTitle.setTextColor(0xFFBAE6FD);
+        laneTitle.setTextSize(scaledSp(11f, scale));
+        laneTitle.setTypeface(Typeface.DEFAULT_BOLD);
+        laneTitle.setGravity(Gravity.CENTER);
+        laneBox.addView(laneTitle, new LinearLayout.LayoutParams(-2, -2));
+
         LaneBarView lane = new LaneBarView(context);
         lane.setFrameScaleMultiplier(scale);
         lane.setScaleMultiplier(1.5f);
         LinearLayout.LayoutParams laneLp = new LinearLayout.LayoutParams(-2, -2);
-        laneLp.setMargins(0, 0, 0, 0);
+        laneLp.setMargins(0, scaledDp(2, scale), 0, 0);
         laneBox.addView(lane, laneLp);
         LinearLayout.LayoutParams laneSectionLp = new LinearLayout.LayoutParams(-2, -2);
         laneSectionLp.setMargins(0, scaledDp(5, scale), 0, scaledDp(4, scale));
@@ -566,6 +575,7 @@ public class OverlayService extends Service {
             clusterTurnText = turn;
             clusterTurnDistanceText = null;
             clusterLaneSection = laneBox;
+            clusterLaneTitleText = laneTitle;
             clusterLaneBar = lane;
             clusterLightRow = lights;
             clusterEtaText = eta;
@@ -588,6 +598,7 @@ public class OverlayService extends Service {
             turnText = turn;
             turnDistanceText = null;
             laneSection = laneBox;
+            laneTitleText = laneTitle;
             laneBar = lane;
             lightRow = lights;
             etaText = eta;
@@ -745,11 +756,18 @@ public class OverlayService extends Service {
             root.addView(laneBox, sectionLp(scale, 8f));
         }
 
+        TextView laneTitle = new TextView(context);
+        laneTitle.setText("车道信息");
+        laneTitle.setTextSize(scaledSp(11f, scale));
+        laneTitle.setTypeface(Typeface.DEFAULT_BOLD);
+        laneTitle.setTextColor(0xFF93C5FD);
+        laneBox.addView(laneTitle, new LinearLayout.LayoutParams(-2, -2));
+
         LaneBarView lane = new LaneBarView(context);
         lane.setFrameScaleMultiplier(scale);
         lane.setScaleMultiplier(1.5f);
         LinearLayout.LayoutParams laneLp = new LinearLayout.LayoutParams(-2, -2);
-        laneLp.setMargins(0, 0, 0, 0);
+        laneLp.setMargins(0, scaledDp(4, scale), 0, 0);
         laneBox.addView(lane, laneLp);
 
         LinearLayout lights = new LinearLayout(context);
@@ -834,6 +852,7 @@ public class OverlayService extends Service {
             clusterTurnText = turnRoad;
             clusterTurnDistanceText = turnDistance;
             clusterLaneSection = laneBox;
+            clusterLaneTitleText = laneTitle;
             clusterLaneBar = lane;
             clusterLightRow = lights;
             clusterEtaText = eta;
@@ -856,6 +875,7 @@ public class OverlayService extends Service {
             turnText = turnRoad;
             turnDistanceText = turnDistance;
             laneSection = laneBox;
+            laneTitleText = laneTitle;
             laneBar = lane;
             lightRow = lights;
             etaText = eta;
@@ -1018,6 +1038,7 @@ public class OverlayService extends Service {
         clusterTurnText = null;
         clusterTurnDistanceText = null;
         clusterLaneSection = null;
+        clusterLaneTitleText = null;
         clusterLaneBar = null;
         clusterLightRow = null;
         clusterEtaText = null;
@@ -1042,8 +1063,7 @@ public class OverlayService extends Service {
 
     private void refreshDisplayPolicies() {
         boolean foregroundChanged = false;
-        if (MainActivity.isHideMainWhenTargetForegroundEnabled(this)
-                || MainActivity.isShowMainWhenTargetForegroundEnabled(this)) {
+        if (MainActivity.isHideMainWhenTargetForegroundEnabled(this)) {
             boolean foreground = isTargetAppForeground();
             foregroundChanged = targetAppForeground != foreground;
             targetAppForeground = foreground;
@@ -1066,10 +1086,6 @@ public class OverlayService extends Service {
 
     private boolean shouldHideMainOverlayForTargetForeground() {
         return MainActivity.isHideMainWhenTargetForegroundEnabled(this) && targetAppForeground;
-    }
-
-    private boolean shouldShowMainOverlayForTargetForeground() {
-        return MainActivity.isShowMainWhenTargetForegroundEnabled(this) && targetAppForeground;
     }
 
     private boolean shouldHideClusterMirrorForInactiveNavigation() {
@@ -1318,9 +1334,7 @@ public class OverlayService extends Service {
     }
 
     private void stopSelfIfNoVisuals() {
-        if (!MainActivity.isMainOverlayEnabled(this)
-                && !MainActivity.isClusterMirrorEnabled(this)
-                && !MainActivity.isShowMainWhenTargetForegroundEnabled(this)) {
+        if (!MainActivity.isMainOverlayEnabled(this) && !MainActivity.isClusterMirrorEnabled(this)) {
             stopSelf();
         }
     }
