@@ -115,6 +115,7 @@ public class MainActivity extends Activity {
     static final String TEXT_MODE_AUTO = "auto";
     static final String OVERLAY_UI_OLD = "old";
     static final String OVERLAY_UI_NEW = "new";
+    static final String OVERLAY_UI_CARD = "card";
     static final int MIN_BACKGROUND_OPACITY_PERCENT = 0;
     static final int MAX_BACKGROUND_OPACITY_PERCENT = 90;
     static final int DEFAULT_BACKGROUND_OPACITY_PERCENT = 90;
@@ -779,8 +780,8 @@ public class MainActivity extends Activity {
         previewLightRow = new LinearLayout(this);
         previewLightRow.setOrientation(LinearLayout.HORIZONTAL);
         previewLightRow.setGravity(Gravity.CENTER);
-        previewLightRow.addView(previewLight("\u2190 51s", 0xFFC62828));
-        previewLightRow.addView(previewLight("\u2191 18s", 0xFFC62828));
+        previewLightRow.addView(previewLight("\u2190 51", 0xFFC62828));
+        previewLightRow.addView(previewLight("\u2191 18", 0xFFC62828));
         panel.addView(previewLightRow, new LinearLayout.LayoutParams(-2, -2));
 
         previewLaneSection = new LinearLayout(this);
@@ -803,7 +804,7 @@ public class MainActivity extends Activity {
         panel.addView(previewLaneSection, laneLp);
 
         previewEtaText = new TextView(this);
-        previewEtaText.setText("5.3\u516c\u91cc \u00b7 10\u5206\u949f\n\u9884\u8ba105:42\u5230\u8fbe\n\u76ee\u7684\u5730 \u5c0f\u7ea2\u95e8\u4e61\u515a\u7fa4\u670d\u52a1\u4e2d\u5fc3");
+        previewEtaText.setText("5.3\u516c\u91cc \u00b7 10\u5206\u949f \u00b7 05:42\n\u5c0f\u7ea2\u95e8\u4e61\u515a\u7fa4\u670d\u52a1\u4e2d\u5fc3");
         previewEtaText.setTextSize(7.5f);
         previewEtaText.setTextColor(0xFFE8EAED);
         previewEtaText.setGravity(Gravity.CENTER);
@@ -819,7 +820,7 @@ public class MainActivity extends Activity {
         panel.addView(previewAlertText, alertLp);
 
         previewDetailText = new TextView(this);
-        previewDetailText.setText("\u8f66\u5934 90\u00b0\n\u9053\u8def \u4e3b\u8981\u9053\u8def");
+        previewDetailText.setText("\u8f66\u5934 \u4e1c \u00b7 \u4e3b\u8981\u9053\u8def");
         previewDetailText.setTextSize(5.8f);
         previewDetailText.setTextColor(0xFFC7D2FE);
         previewDetailText.setGravity(Gravity.CENTER);
@@ -1910,21 +1911,31 @@ public class MainActivity extends Activity {
     }
 
     private String overlayUiStyleButtonText() {
-        return isNewOverlayUiEnabled(this)
-                ? "\u60ac\u6d6e\u7a97\u6837\u5f0f\uff1a\u65b0 UI\uff08\u6d4b\u8bd5\u4e2d\uff09"
-                : "\u60ac\u6d6e\u7a97\u6837\u5f0f\uff1a\u65e7 UI";
+        String style = getOverlayUiStyle(this);
+        if (OVERLAY_UI_CARD.equals(style)) {
+            return "\u60ac\u6d6e\u7a97\u6837\u5f0f\uff1a\u65b0 UI-1\uff08\u5361\u7247\u6837\u5f0f\uff09";
+        }
+        if (OVERLAY_UI_NEW.equals(style)) {
+            return "\u60ac\u6d6e\u7a97\u6837\u5f0f\uff1a\u65b0 UI\uff08\u6d4b\u8bd5\u4e2d\uff09";
+        }
+        return "\u60ac\u6d6e\u7a97\u6837\u5f0f\uff1a\u65e7 UI";
     }
 
     private void chooseOverlayUiStyle() {
         String[] labels = {
                 "\u65e7 UI\uff08\u9ed8\u8ba4\uff09",
-                "\u65b0 UI\uff08\u5361\u7247\u6837\u5f0f\uff0c\u6d4b\u8bd5\u4e2d\uff09"
+                "\u65b0 UI\uff08\u5361\u7247\u6837\u5f0f\uff0c\u6d4b\u8bd5\u4e2d\uff09",
+                "\u65b0 UI-1\uff08\u5361\u7247\u7b80\u6d01\u6837\u5f0f\uff09"
         };
-        int checked = isNewOverlayUiEnabled(this) ? 1 : 0;
+        String currentStyle = getOverlayUiStyle(this);
+        int checked = OVERLAY_UI_CARD.equals(currentStyle) ? 2
+                : OVERLAY_UI_NEW.equals(currentStyle) ? 1 : 0;
         new AlertDialog.Builder(this)
                 .setTitle("\u9009\u62e9\u60ac\u6d6e\u7a97\u6837\u5f0f")
                 .setSingleChoiceItems(labels, checked, (dialog, which) -> {
-                    saveOverlayUiStyle(which == 1 ? OVERLAY_UI_NEW : OVERLAY_UI_OLD);
+                    String style = which == 2 ? OVERLAY_UI_CARD
+                            : which == 1 ? OVERLAY_UI_NEW : OVERLAY_UI_OLD;
+                    saveOverlayUiStyle(style);
                     applyOverlayPreviewStyle();
                     notifyOverlayStyleChanged();
                     dialog.dismiss();
@@ -1961,7 +1972,9 @@ public class MainActivity extends Activity {
     private void saveOverlayUiStyle(String style) {
         getSharedPreferences(PREFS, MODE_PRIVATE)
                 .edit()
-                .putString(KEY_OVERLAY_UI_STYLE, OVERLAY_UI_NEW.equals(style) ? OVERLAY_UI_NEW : OVERLAY_UI_OLD)
+                .putString(KEY_OVERLAY_UI_STYLE,
+                        OVERLAY_UI_CARD.equals(style) ? OVERLAY_UI_CARD
+                        : OVERLAY_UI_NEW.equals(style) ? OVERLAY_UI_NEW : OVERLAY_UI_OLD)
                 .apply();
     }
 
@@ -2256,7 +2269,12 @@ public class MainActivity extends Activity {
     }
 
     static boolean isNewOverlayUiEnabled(android.content.Context context) {
-        return OVERLAY_UI_NEW.equals(getOverlayUiStyle(context));
+        String style = getOverlayUiStyle(context);
+        return OVERLAY_UI_NEW.equals(style) || OVERLAY_UI_CARD.equals(style);
+    }
+
+    static boolean isCardOverlayUiEnabled(android.content.Context context) {
+        return OVERLAY_UI_CARD.equals(getOverlayUiStyle(context));
     }
 
     static boolean usesDarkTextPalette(android.content.Context context) {
@@ -2283,7 +2301,9 @@ public class MainActivity extends Activity {
     static String getOverlayUiStyle(android.content.Context context) {
         String style = context.getSharedPreferences(PREFS, MODE_PRIVATE)
                 .getString(KEY_OVERLAY_UI_STYLE, OVERLAY_UI_OLD);
-        return OVERLAY_UI_NEW.equals(style) ? OVERLAY_UI_NEW : OVERLAY_UI_OLD;
+        if (OVERLAY_UI_CARD.equals(style)) return OVERLAY_UI_CARD;
+        if (OVERLAY_UI_NEW.equals(style)) return OVERLAY_UI_NEW;
+        return OVERLAY_UI_OLD;
     }
 
     static boolean isOverlayContentEnabled(android.content.Context context, String key) {
