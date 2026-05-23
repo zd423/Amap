@@ -8,6 +8,7 @@ import android.content.IntentFilter;
 import android.content.IntentSender;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageInstaller;
+import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.text.TextUtils;
 
@@ -86,12 +87,20 @@ final class Updater {
                 manifest.optLong("size", -1L),
                 manifest.optBoolean("force", false),
                 changelog,
-                changelogUrl);
+                changelogUrl,
+                manifest.optString("downloadChannel", ""),
+                manifest.optString("assetName", ""),
+                manifest.optString("releaseTag", ""),
+                manifest.optString("releaseUrl", ""));
     }
 
     static void install(Context context, UpdateInfo info, Listener listener) {
+        install(context, info, listener, false);
+    }
+
+    static void install(Context context, UpdateInfo info, Listener listener, boolean forceInstall) {
         try {
-            if (!info.hasUpdate()) {
+            if (!info.hasUpdate() && !forceInstall) {
                 notify(listener, "已是最新版本: " + info.localVersionName + " (" + info.localVersionCode + ")");
                 return;
             }
@@ -99,13 +108,22 @@ final class Updater {
                 notify(listener, "更新接口未提供 APK 地址");
                 return;
             }
+            if (!info.hasUpdate()) {
+                notify(listener, "正在强制安装服务器最新版；如果当前测试包版本号更高，系统可能会拒绝降级安装。");
+            }
             File apk = new File(context.getCacheDir(), UPDATE_APK_NAME);
+            if (apk.exists() && !apk.delete()) {
+                notify(listener, "无法清理旧更新包，将覆盖写入");
+            }
             download(info.apkUrl, apk, listener);
+            notify(listener, "下载完成，正在校验 APK 大小和 SHA-256...");
             verifyApk(apk, info);
-            notify(listener, "下载完成，正在通过 PackageInstaller 安装...");
-            installViaPackageInstaller(context, apk, listener);
+            notify(listener, "校验通过，正在解析 APK 包体...");
+            validateDownloadedApk(context, apk, info);
+            notify(listener, "APK 解析通过，正在通过 PackageInstaller 安装...");
+            installViaPackageInstaller(context, apk, info, listener);
         } catch (Throwable t) {
-            notify(listener, "更新失败: " + t.getMessage());
+            notify(listener, "更新失败: " + t.getMessage() + "\n" + info.serverDetailText());
         }
     }
 
@@ -175,6 +193,9 @@ final class Updater {
     }
 
     private static void verifyApk(File apk, UpdateInfo info) throws Exception {
+        if (!apk.exists() || apk.length() <= 0) {
+            throw new IllegalStateException("APK 下载为空");
+        }
         if (info.size > 0 && apk.length() != info.size) {
             throw new IllegalStateException("APK 大小校验失败: " + apk.length() + " != " + info.size);
         }
@@ -183,6 +204,24 @@ final class Updater {
             if (!info.sha256.equalsIgnoreCase(actual)) {
                 throw new IllegalStateException("APK SHA-256 校验失败\n" + actual);
             }
+        }
+    }
+
+    private static void validateDownloadedApk(Context context, File apk, UpdateInfo info) throws Exception {
+        PackageInfo parsed = context.getPackageManager().getPackageArchiveInfo(
+                apk.getAbsolutePath(), PackageManager.GET_ACTIVITIES);
+        if (parsed == null) {
+            throw new IllegalStateException("APK 本地解析失败，系统可能会提示“解析包时出现问题”");
+        }
+        if (!TextUtils.isEmpty(info.packageName) && !info.packageName.equals(parsed.packageName)) {
+            throw new IllegalStateException("APK 包名不匹配: " + parsed.packageName);
+        }
+        int parsedVersionCode = android.os.Build.VERSION.SDK_INT >= 28
+                ? (int) parsed.getLongVersionCode()
+                : parsed.versionCode;
+        if (info.remoteVersionCode > 0 && parsedVersionCode != info.remoteVersionCode) {
+            throw new IllegalStateException("APK 版本号不匹配: " + parsedVersionCode
+                    + " != " + info.remoteVersionCode);
         }
     }
 
@@ -253,7 +292,7 @@ final class Updater {
         return sb.toString();
     }
 
-    private static void installViaPackageInstaller(Context context, File apk, Listener listener) throws Exception {
+    private static void installViaPackageInstaller(Context context, File apk, UpdateInfo info, Listener listener) throws Exception {
         if (android.os.Build.VERSION.SDK_INT >= 26
                 && !context.getPackageManager().canRequestPackageInstalls()) {
             throw new IllegalStateException("请先授予“安装未知应用”权限");
@@ -288,7 +327,8 @@ final class Updater {
                 }
                 String msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
                 Updater.notify(listener, "安装失败 [status=" + status + "]"
-                        + (TextUtils.isEmpty(msg) ? "" : "\n" + msg));
+                        + (TextUtils.isEmpty(msg) ? "" : "\n" + msg)
+                        + "\n" + info.serverDetailText());
                 safeUnregister(ctx, this);
             }
         };
@@ -374,10 +414,15 @@ final class Updater {
         final boolean force;
         final String changelog;
         final String changelogUrl;
+        final String downloadChannel;
+        final String assetName;
+        final String releaseTag;
+        final String releaseUrl;
 
         UpdateInfo(String updateUrl, String packageName, int localVersionCode, String localVersionName,
                    int remoteVersionCode, String remoteVersionName, String apkUrl, String sha256,
-                   long size, boolean force, String changelog, String changelogUrl) {
+                   long size, boolean force, String changelog, String changelogUrl,
+                   String downloadChannel, String assetName, String releaseTag, String releaseUrl) {
             this.updateUrl = updateUrl;
             this.packageName = packageName;
             this.localVersionCode = localVersionCode;
@@ -390,6 +435,10 @@ final class Updater {
             this.force = force;
             this.changelog = changelog;
             this.changelogUrl = changelogUrl;
+            this.downloadChannel = downloadChannel;
+            this.assetName = assetName;
+            this.releaseTag = releaseTag;
+            this.releaseUrl = releaseUrl;
         }
 
         boolean hasUpdate() {
@@ -406,6 +455,7 @@ final class Updater {
             if (force) {
                 sb.append("强制更新: 是\n");
             }
+            appendServerDetails(sb);
             if (!TextUtils.isEmpty(changelog)) {
                 sb.append("\n更新日志:\n").append(changelog);
             } else {
@@ -425,6 +475,18 @@ final class Updater {
             if (force) {
                 sb.append("- 强制更新：是\n");
             }
+            if (!TextUtils.isEmpty(downloadChannel)) {
+                sb.append("- 下载渠道：`").append(downloadChannel).append("`\n");
+            }
+            if (!TextUtils.isEmpty(assetName)) {
+                sb.append("- 资源文件：`").append(assetName).append("`\n");
+            }
+            if (!TextUtils.isEmpty(releaseTag)) {
+                sb.append("- Release：`").append(releaseTag).append("`\n");
+            }
+            if (!TextUtils.isEmpty(sha256)) {
+                sb.append("- SHA-256：`").append(shortSha256()).append("`\n");
+            }
             sb.append("\n## 更新日志\n\n");
             if (!TextUtils.isEmpty(changelog)) {
                 sb.append(changelog);
@@ -432,6 +494,52 @@ final class Updater {
                 sb.append("暂无");
             }
             return sb.toString();
+        }
+
+        String serverDetailText() {
+            StringBuilder sb = new StringBuilder();
+            sb.append("更新源: ").append(updateUrl).append('\n');
+            if (!TextUtils.isEmpty(downloadChannel)) {
+                sb.append("下载渠道: ").append(downloadChannel).append('\n');
+            }
+            if (!TextUtils.isEmpty(assetName)) {
+                sb.append("资源文件: ").append(assetName).append('\n');
+            }
+            if (!TextUtils.isEmpty(releaseTag)) {
+                sb.append("Release: ").append(releaseTag).append('\n');
+            }
+            if (size > 0) {
+                sb.append("服务器大小: ").append(size).append(" bytes\n");
+            }
+            if (!TextUtils.isEmpty(sha256)) {
+                sb.append("SHA-256: ").append(shortSha256()).append('\n');
+            }
+            if (!TextUtils.isEmpty(apkUrl)) {
+                sb.append("APK: ").append(apkUrl);
+            }
+            return sb.toString();
+        }
+
+        private void appendServerDetails(StringBuilder sb) {
+            if (!TextUtils.isEmpty(downloadChannel)) {
+                sb.append("下载渠道: ").append(downloadChannel).append('\n');
+            }
+            if (!TextUtils.isEmpty(assetName)) {
+                sb.append("资源文件: ").append(assetName).append('\n');
+            }
+            if (!TextUtils.isEmpty(releaseTag)) {
+                sb.append("Release: ").append(releaseTag).append('\n');
+            }
+            if (!TextUtils.isEmpty(sha256)) {
+                sb.append("SHA-256: ").append(shortSha256()).append('\n');
+            }
+        }
+
+        private String shortSha256() {
+            if (sha256.length() <= 16) {
+                return sha256;
+            }
+            return sha256.substring(0, 12) + "..." + sha256.substring(sha256.length() - 8);
         }
     }
 }

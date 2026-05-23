@@ -55,8 +55,8 @@ public class OverlayService extends Service {
     private static final String ACTION_SEND = "AUTONAVI_STANDARD_BROADCAST_SEND";
     private static final String ACTION_RECV = "AUTONAVI_STANDARD_BROADCAST_RECV";
     private static final int KEY_TRAFFIC_LIGHT_COUNTDOWN = 60073;
-    private static final long ALERT_TTL_MS = 5000L;
-    private static final long LIGHT_TTL_MS = 4500L;
+    private static final long ALERT_TTL_MS = 15000L;
+    private static final long LIGHT_TTL_MS = 12000L;
     private static final long LIGHT_TICK_MS = 1000L;
     private static final long DISPLAY_POLICY_POLL_MS = 1500L;
     private static final long NAVIGATION_ACTIVE_TTL_MS = 12000L;
@@ -2005,9 +2005,7 @@ public class OverlayService extends Service {
                 renderTrafficLights();
                 return;
             } else if (!hasSingleLightPayload(extras)) {
-                trafficLights.clear();
-                renderTrafficLights();
-                Log.d(TAG, "lightsData present but empty, cleared stale cruise lights");
+                Log.d(TAG, "lightsData present but empty, keeping stale cruise lights until TTL");
                 return;
             } else {
                 Log.d(TAG, "lightsData present but no valid light parsed, falling back to single-field payload");
@@ -2979,8 +2977,7 @@ public class OverlayService extends Service {
 
         if (parts.isEmpty()) {
             if (alertPayload) {
-                currentLimitSpeed = -1;
-                clearAlertDetails();
+                Log.d(TAG, "empty alert payload, keeping previous alert until TTL");
             }
             return;
         }

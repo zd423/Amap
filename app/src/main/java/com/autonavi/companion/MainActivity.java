@@ -252,8 +252,8 @@ public class MainActivity extends Activity {
                     button("\u9009\u62e9\u4e0b\u8f7d\u6e20\u9053", v -> chooseUpdateChannel(), 0xFF334155),
                     button("\u68c0\u67e5\u66f4\u65b0", v -> checkForUpdates(true), 0xFF059669));
             addButtonPair(parent,
-                    button("\u67e5\u770b/\u4fdd\u5b58\u65e5\u5fd7", v -> showLogcatDialog(), 0xFF4F46E5),
-                    null);
+                    button("\u5f3a\u5236\u66f4\u65b0\u6700\u65b0\u7248", v -> forceInstallServerLatest(), 0xFFDC2626),
+                    button("\u67e5\u770b/\u4fdd\u5b58\u65e5\u5fd7", v -> showLogcatDialog(), 0xFF4F46E5));
             return;
         }
         parent.addView(button("\u9009\u62e9\u76ee\u6807\u5e94\u7528", v -> chooseTargetApp(), 0xFF2563EB));
@@ -263,6 +263,7 @@ public class MainActivity extends Activity {
         parent.addView(button("\u6253\u5f00\u76ee\u6807\u5e94\u7528", v -> openTargetApp(), 0xFF111827));
         parent.addView(button("\u9009\u62e9\u4e0b\u8f7d\u6e20\u9053", v -> chooseUpdateChannel(), 0xFF334155));
         parent.addView(button("\u68c0\u67e5\u66f4\u65b0", v -> checkForUpdates(true), 0xFF059669));
+        parent.addView(button("\u5f3a\u5236\u66f4\u65b0\u6700\u65b0\u7248", v -> forceInstallServerLatest(), 0xFFDC2626));
         parent.addView(button("\u67e5\u770b/\u4fdd\u5b58\u65e5\u5fd7", v -> showLogcatDialog(), 0xFF4F46E5));
     }
 
@@ -1538,6 +1539,18 @@ public class MainActivity extends Activity {
         }).start();
     }
 
+    private void forceInstallServerLatest() {
+        updateUpdateText("\u6b63\u5728\u83b7\u53d6\u670d\u52a1\u5668\u6700\u65b0\u7248...\n" + SERVER_UPDATE_URL);
+        new Thread(() -> {
+            try {
+                Updater.UpdateInfo info = Updater.check(this, SERVER_UPDATE_URL);
+                runOnUiThread(() -> showUpdateDetail(info, true));
+            } catch (Throwable t) {
+                runOnUiThread(() -> updateUpdateText("\u83b7\u53d6\u670d\u52a1\u5668\u6700\u65b0\u7248\u5931\u8d25: " + t.getMessage()));
+            }
+        }).start();
+    }
+
     private void handleUpdateInfo(Updater.UpdateInfo info, boolean manual) {
         if (!info.hasUpdate()) {
             updateUpdateText("\u5df2\u662f\u6700\u65b0\u7248\n" + info.localVersionName + " (" + info.localVersionCode + ")");
@@ -1551,6 +1564,10 @@ public class MainActivity extends Activity {
     }
 
     private void showUpdateDetail(Updater.UpdateInfo info) {
+        showUpdateDetail(info, false);
+    }
+
+    private void showUpdateDetail(Updater.UpdateInfo info, boolean forceInstall) {
         TextView message = new TextView(this);
         message.setText(renderMarkdown(info.detailMarkdown()));
         message.setTextColor(0xFF0F172A);
@@ -1565,9 +1582,10 @@ public class MainActivity extends Activity {
                 Math.min(dp(560), Math.max(dp(320), getResources().getDisplayMetrics().heightPixels * 2 / 3))));
 
         new AlertDialog.Builder(this)
-                .setTitle("\u53d1\u73b0\u65b0\u7248")
+                .setTitle(forceInstall ? "\u5f3a\u5236\u66f4\u65b0\u6700\u65b0\u7248" : "\u53d1\u73b0\u65b0\u7248")
                 .setView(scroll)
-                .setPositiveButton("\u66f4\u65b0", (dialog, which) -> installUpdate(info))
+                .setPositiveButton(forceInstall ? "\u5f3a\u5236\u66f4\u65b0" : "\u66f4\u65b0",
+                        (dialog, which) -> installUpdate(info, forceInstall))
                 .setNegativeButton("\u53d6\u6d88", null)
                 .show();
     }
@@ -1643,9 +1661,13 @@ public class MainActivity extends Activity {
     }
 
     private void installUpdate(Updater.UpdateInfo info) {
+        installUpdate(info, false);
+    }
+
+    private void installUpdate(Updater.UpdateInfo info, boolean forceInstall) {
         updateUpdateText("\u51c6\u5907\u66f4\u65b0...\n" + info.remoteVersionName + " (" + info.remoteVersionCode + ")");
         new Thread(() -> Updater.install(this, info,
-                message -> runOnUiThread(() -> updateUpdateText(message)))).start();
+                message -> runOnUiThread(() -> updateUpdateText(message)), forceInstall)).start();
     }
 
     private void updateUpdateText(String text) {
