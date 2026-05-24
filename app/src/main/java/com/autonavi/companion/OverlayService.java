@@ -12,6 +12,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.hardware.display.DisplayManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
 import android.graphics.Point;
@@ -20,14 +22,11 @@ import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
-import android.text.SpannableString;
-import android.text.SpannableStringBuilder;
 import android.text.TextUtils;
-import android.text.style.ForegroundColorSpan;
-import android.text.style.StyleSpan;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.Display;
@@ -45,7 +44,9 @@ import org.json.JSONObject;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Array;
 import java.lang.reflect.Method;
+import java.io.File;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -61,11 +62,13 @@ public class OverlayService extends Service {
     private static final String ACTION_RECV = "AUTONAVI_STANDARD_BROADCAST_RECV";
     private static final int KEY_TRAFFIC_LIGHT_COUNTDOWN = 60073;
     private static final long ALERT_TTL_MS = 5000L;
+    private static final String DIY_DIR_NAME = "amap_companion/diy";
     private static final long LIGHT_TTL_MS = 4500L;
     private static final long LIGHT_TICK_MS = 1000L;
     private static final long DISPLAY_POLICY_POLL_MS = 1500L;
     private static final long NAVIGATION_ACTIVE_TTL_MS = 12000L;
     private static final long TARGET_BROADCAST_ACTIVE_TTL_MS = 300000L;
+    private static final long PANEL_WIDTH_SHRINK_DELAY_MS = 2500L;
     private static final Pattern CAMERA_LIGHT_PATTERN = Pattern.compile(
             "CameraLightInfo\\{([^}]*)\\}");
 
@@ -137,6 +140,8 @@ public class OverlayService extends Service {
     private boolean clusterMirrorEnabled;
     private int clusterMirrorRetryCount;
     private final HashMap<Integer, LightState> trafficLights = new HashMap<>();
+    private final HashMap<String, Bitmap> diyArrowCache = new HashMap<>();
+    private final HashMap<String, Long> diyArrowModified = new HashMap<>();
     private boolean inCruiseMode;
     private float downRawX;
     private float downRawY;
@@ -160,6 +165,14 @@ public class OverlayService extends Service {
     private int currentLimitSpeed = -1;
     private long alertUpdatedAt;
     private int navigationTurnDir = -1;
+    private Runnable mainPanelWidthUnlock;
+    private Runnable clusterPanelWidthUnlock;
+    private int mainPanelBaseMinWidth = -1;
+    private int clusterPanelBaseMinWidth = -1;
+    private int mainPanelHeldMinWidth;
+    private int clusterPanelHeldMinWidth;
+    private int[] lastLaneData;
+    private boolean[] lastLaneAdvised;
     private float overlayScale = 2f;
     private float clusterScale = 2f;
     private float activeDensity = -1f;
@@ -253,6 +266,12 @@ public class OverlayService extends Service {
         mainHandler.removeCallbacks(alertClear);
         mainHandler.removeCallbacks(trafficLightTicker);
         mainHandler.removeCallbacks(displayPolicyPoll);
+        if (mainPanelWidthUnlock != null) {
+            mainHandler.removeCallbacks(mainPanelWidthUnlock);
+        }
+        if (clusterPanelWidthUnlock != null) {
+            mainHandler.removeCallbacks(clusterPanelWidthUnlock);
+        }
         dismissClusterMirror();
         try {
             unregisterReceiver(receiver);
@@ -288,6 +307,7 @@ public class OverlayService extends Service {
         filter.addAction(MainActivity.ACTION_MAIN_OVERLAY_CHANGED);
         filter.addAction(MainActivity.ACTION_OVERLAY_SCALE_CHANGED);
         filter.addAction(MainActivity.ACTION_CLUSTER_MIRROR_CHANGED);
+        filter.addAction(MainActivity.ACTION_CLUSTER_POSITION_CHANGED);
         filter.addAction(MainActivity.ACTION_OVERLAY_CONTENT_CHANGED);
         filter.addAction(MainActivity.ACTION_OVERLAY_STYLE_CHANGED);
         filter.addAction(MainActivity.ACTION_DISPLAY_POLICY_CHANGED);
@@ -582,13 +602,10 @@ public class OverlayService extends Service {
         mode.setText("待接收导航/巡航信息");
         root.addView(mode, new LinearLayout.LayoutParams(-2, -2));
 
-        // Turn row: horizontal layout with icon+distance badge + road name
         LinearLayout turnRow = new LinearLayout(context);
-        turnRow.setOrientation(LinearLayout.HORIZONTAL);
-        turnRow.setGravity(Gravity.CENTER_VERTICAL);
-        turnRow.setPadding(scaledDp(8, scale), scaledDp(8, scale), scaledDp(12, scale), scaledDp(8, scale));
-        turnRow.setClipChildren(false);
-        turnRow.setClipToPadding(false);
+        turnRow.setOrientation(LinearLayout.VERTICAL);
+        turnRow.setGravity(Gravity.CENTER);
+        turnRow.setPadding(scaledDp(14, scale), scaledDp(8, scale), scaledDp(16, scale), scaledDp(9, scale));
         GradientDrawable turnBg = new GradientDrawable();
         turnBg.setOrientation(GradientDrawable.Orientation.LEFT_RIGHT);
         turnBg.setColors(new int[]{0xFF1D4ED8, 0xFF0891B2});
@@ -597,48 +614,38 @@ public class OverlayService extends Service {
         turnRow.setVisibility(View.GONE);
         turnRow.setMinimumHeight(scaledDp(62, scale));
 
-        // Icon + distance badge in a FrameLayout
-        FrameLayout iconFrame = new FrameLayout(context);
-        iconFrame.setClipChildren(false);
-        iconFrame.setClipToPadding(false);
-        ImageView turnIcon = new ImageView(context);
-        turnIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        int iconSize = scaledDp(40, scale);
-        FrameLayout.LayoutParams iconLp = new FrameLayout.LayoutParams(iconSize, iconSize);
-        iconLp.gravity = Gravity.CENTER;
-        iconFrame.addView(turnIcon, iconLp);
-
-        TextView distBadge = new TextView(context);
-        distBadge.setTextColor(Color.WHITE);
-        distBadge.setTextSize(scaledSp(14f, scale));
-        distBadge.setTypeface(Typeface.DEFAULT_BOLD);
-        distBadge.setGravity(Gravity.CENTER);
-        GradientDrawable distBg = new GradientDrawable();
-        distBg.setColor(0xDD1D4ED8);
-        distBg.setCornerRadius(scaledDp(4, scale));
-        distBadge.setPadding(scaledDp(5, scale), scaledDp(2, scale), scaledDp(5, scale), scaledDp(2, scale));
-        distBadge.setVisibility(View.GONE);
-        FrameLayout.LayoutParams distLp = new FrameLayout.LayoutParams(-2, -2);
-        distLp.gravity = Gravity.TOP | Gravity.END;
-        distLp.topMargin = -scaledDp(12, scale);
-        distLp.rightMargin = -scaledDp(4, scale);
-        iconFrame.addView(distBadge, distLp);
-        LinearLayout.LayoutParams iconFrameRowLp = new LinearLayout.LayoutParams(-2, -2);
-        iconFrameRowLp.topMargin = scaledDp(6, scale);
-        turnRow.addView(iconFrame, iconFrameRowLp);
-
         TextView turn = new TextView(context);
         turn.setTextColor(Color.WHITE);
-        turn.setTextSize(scaledSp(24f, scale));
+        turn.setTextSize(scaledSp(22f, scale));
         turn.setTypeface(Typeface.DEFAULT_BOLD);
         turn.setSingleLine(true);
-        turn.setEllipsize(null);
+        turn.setMaxLines(1);
+        turn.setEllipsize(TextUtils.TruncateAt.END);
         turn.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams turnLp = new LinearLayout.LayoutParams(0, -2, 1f);
-        turnLp.setMargins(scaledDp(10, scale), 0, 0, 0);
-        turnRow.addView(turn, turnLp);
+        turnRow.addView(turn, new LinearLayout.LayoutParams(-2, -2));
 
-        LinearLayout.LayoutParams turnRowLp = new LinearLayout.LayoutParams(-1, -2);
+        LinearLayout turnDetailRow = new LinearLayout(context);
+        turnDetailRow.setOrientation(LinearLayout.HORIZONTAL);
+        turnDetailRow.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams detailRowLp = new LinearLayout.LayoutParams(-2, -2);
+        detailRowLp.setMargins(0, scaledDp(4, scale), 0, 0);
+        turnRow.addView(turnDetailRow, detailRowLp);
+
+        ImageView turnIcon = new ImageView(context);
+        turnIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        turnIcon.setVisibility(View.GONE);
+        LinearLayout.LayoutParams turnIconLp = new LinearLayout.LayoutParams(scaledDp(30, scale), scaledDp(30, scale));
+        turnIconLp.setMargins(0, 0, scaledDp(7, scale), 0);
+        turnDetailRow.addView(turnIcon, turnIconLp);
+
+        TextView turnDistance = new TextView(context);
+        turnDistance.setTextColor(Color.WHITE);
+        turnDistance.setTextSize(scaledSp(22f, scale));
+        turnDistance.setTypeface(Typeface.DEFAULT_BOLD);
+        turnDistance.setGravity(Gravity.CENTER);
+        turnDetailRow.addView(turnDistance, new LinearLayout.LayoutParams(-2, -2));
+
+        LinearLayout.LayoutParams turnRowLp = new LinearLayout.LayoutParams(-2, -2);
         turnRowLp.setMargins(0, scaledDp(6, scale), 0, scaledDp(5, scale));
         root.addView(turnRow, turnRowLp);
 
@@ -646,11 +653,6 @@ public class OverlayService extends Service {
         laneBox.setOrientation(LinearLayout.VERTICAL);
         laneBox.setGravity(Gravity.CENTER_HORIZONTAL);
         laneBox.setPadding(scaledDp(8, scale), scaledDp(5, scale), scaledDp(8, scale), scaledDp(7, scale));
-        GradientDrawable laneBg = new GradientDrawable();
-        laneBg.setColor(0xCC0F172A);
-        laneBg.setCornerRadius(scaledDp(10, scale));
-        laneBg.setStroke(scaledDp(1, scale), 0x1FFFFFFF);
-        laneBox.setBackground(laneBg);
         laneBox.setVisibility(View.GONE);
 
         LaneBarView lane = new LaneBarView(context);
@@ -677,16 +679,15 @@ public class OverlayService extends Service {
         eta.setVisibility(View.GONE);
         root.addView(eta, new LinearLayout.LayoutParams(-2, -2));
 
-        TextView alert = new TextView(context);
+        TextView alert = compactText(context, 14f, false, scale);
         alert.setVisibility(View.GONE);
-        alert.setHeight(0);
         root.addView(alert, new LinearLayout.LayoutParams(-2, 0));
 
         LinearLayout edogAlertRow = buildEdogAlertRow(context, scale);
         edogAlertRow.setVisibility(View.GONE);
-        LinearLayout.LayoutParams alertRowLp = new LinearLayout.LayoutParams(-2, -2);
-        alertRowLp.setMargins(0, scaledDp(5, scale), 0, 0);
-        root.addView(edogAlertRow, alertRowLp);
+        LinearLayout.LayoutParams alertLp = new LinearLayout.LayoutParams(-2, -2);
+        alertLp.setMargins(0, scaledDp(5, scale), 0, 0);
+        root.addView(edogAlertRow, alertLp);
 
         TextView detail = compactText(context, 12f, true, scale);
         detail.setMaxLines(4);
@@ -707,9 +708,8 @@ public class OverlayService extends Service {
             clusterTurnCard = null;
             clusterTurnLeadText = null;
             clusterTurnText = turn;
-            clusterTurnDistanceText = null;
+            clusterTurnDistanceText = turnDistance;
             clusterTurnIconView = turnIcon;
-            clusterTurnDistBadge = distBadge;
             clusterTurnRowLayout = turnRow;
             clusterLaneSection = laneBox;
             clusterLaneBar = lane;
@@ -733,9 +733,8 @@ public class OverlayService extends Service {
             turnCard = null;
             turnLeadText = null;
             turnText = turn;
-            turnDistanceText = null;
+            turnDistanceText = turnDistance;
             turnIconView = turnIcon;
-            turnDistBadge = distBadge;
             turnRowLayout = turnRow;
             laneSection = laneBox;
             laneBar = lane;
@@ -835,11 +834,11 @@ public class OverlayService extends Service {
         ImageView turnLeadIcon = new ImageView(context);
         turnLeadIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
         turnLeadIcon.setVisibility(View.GONE);
-        int turnLeadIconSize = scaledDp(18, scale);
+        int turnLeadIconSize = scaledDp(24, scale);
         turnLeadRow.addView(turnLeadIcon, new LinearLayout.LayoutParams(turnLeadIconSize, turnLeadIconSize));
         TextView turnLead = new TextView(context);
         turnLead.setText("下一路口");
-        turnLead.setTextSize(scaledSp(12f, scale));
+        turnLead.setTextSize(scaledSp(13f, scale));
         turnLead.setTypeface(Typeface.DEFAULT_BOLD);
         LinearLayout.LayoutParams turnLeadTextLp = new LinearLayout.LayoutParams(-2, -2);
         turnLeadTextLp.setMargins(scaledDp(3, scale), 0, 0, 0);
@@ -868,7 +867,6 @@ public class OverlayService extends Service {
         laneBox.setOrientation(LinearLayout.VERTICAL);
         laneBox.setGravity(Gravity.CENTER_HORIZONTAL);
         laneBox.setPadding(scaledDp(10, scale), scaledDp(7, scale), scaledDp(10, scale), scaledDp(8, scale));
-        laneBox.setBackground(createSectionBackground(scale));
         laneBox.setVisibility(View.GONE);
         root.addView(laneBox, sectionLp(scale, cluster ? 5f : 8f));
 
@@ -906,20 +904,28 @@ public class OverlayService extends Service {
         LinearLayout edogAlertRow = buildEdogAlertRow(context, scale);
         alertBox.addView(edogAlertRow, new LinearLayout.LayoutParams(-2, -2));
 
-        TextView limitBadge = speedBadge(context, "——", scale);
+        TextView limitBadge = speedBadge(context, "--", scale);
         limitBadge.setVisibility(View.GONE);
-        limitBadge.setHeight(0);
         alertBox.addView(limitBadge, new LinearLayout.LayoutParams(0, 0));
 
-        TextView alertCaption = new TextView(context);
-        alertCaption.setVisibility(View.GONE);
-        alertCaption.setHeight(0);
-        alertBox.addView(alertCaption, new LinearLayout.LayoutParams(0, 0));
+        LinearLayout alertRight = new LinearLayout(context);
+        alertRight.setOrientation(LinearLayout.VERTICAL);
+        alertBox.addView(alertRight, new LinearLayout.LayoutParams(0, 0));
 
-        TextView alert = new TextView(context);
+        TextView alertCaption = new TextView(context);
+        alertCaption.setText("道路提醒");
+        alertCaption.setTextSize(scaledSp(12f, scale));
+        alertCaption.setTypeface(Typeface.DEFAULT_BOLD);
+        alertCaption.setTextColor(0xFFCBD5E1);
+        alertCaption.setVisibility(View.GONE);
+        alertRight.addView(alertCaption, new LinearLayout.LayoutParams(-2, -2));
+
+        TextView alert = compactText(context, 14f, false, scale);
+        alert.setGravity(Gravity.START);
+        alert.setPadding(0, scaledDp(4, scale), 0, 0);
+        alert.setMaxLines(3);
         alert.setVisibility(View.GONE);
-        alert.setHeight(0);
-        alertBox.addView(alert, new LinearLayout.LayoutParams(0, 0));
+        alertRight.addView(alert, new LinearLayout.LayoutParams(-2, -2));
 
         TextView detail = compactText(context, 12f, true, scale);
         detail.setMaxLines(4);
@@ -990,20 +996,24 @@ public class OverlayService extends Service {
         LinearLayout root = new LinearLayout(context);
         root.setOrientation(LinearLayout.HORIZONTAL);
         root.setGravity(Gravity.CENTER_VERTICAL);
-        root.setPadding(scaledDp(10, scale), scaledDp(8, scale), scaledDp(12, scale), scaledDp(8, scale));
-        root.setBackground(cluster ? createClusterPanelBackground() : createMainPanelBackground());
+        root.setPadding(scaledDp(10, scale), scaledDp(7, scale), scaledDp(12, scale), scaledDp(7, scale));
+        root.setMinimumHeight(scaledDp(48, scale));
+        root.setBackground(createDynamicIslandBackground(scale));
 
-        // Navigation turn box (icon + distance, priority over lane info)
+        TextView mode = new TextView(context);
+        mode.setVisibility(View.GONE);
+        root.addView(mode, new LinearLayout.LayoutParams(0, 0));
+
         LinearLayout navTurn = new LinearLayout(context);
         navTurn.setOrientation(LinearLayout.HORIZONTAL);
         navTurn.setGravity(Gravity.CENTER_VERTICAL);
         navTurn.setVisibility(View.GONE);
         ImageView navIcon = new ImageView(context);
         navIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        int navIconSize = scaledDp(32, scale);
+        int navIconSize = scaledDp(28, scale);
         navTurn.addView(navIcon, new LinearLayout.LayoutParams(navIconSize, navIconSize));
         TextView navDist = new TextView(context);
-        navDist.setTextColor(0xFFFFFFFF);
+        navDist.setTextColor(primaryTextColor());
         navDist.setTextSize(scaledSp(14f, scale));
         navDist.setTypeface(Typeface.DEFAULT_BOLD);
         LinearLayout.LayoutParams navDistLp = new LinearLayout.LayoutParams(-2, -2);
@@ -1011,53 +1021,38 @@ public class OverlayService extends Service {
         navTurn.addView(navDist, navDistLp);
         root.addView(navTurn, new LinearLayout.LayoutParams(-2, -2));
 
-        // Lane guidance (shown when no nav turn data)
         LinearLayout laneBox = new LinearLayout(context);
         laneBox.setOrientation(LinearLayout.VERTICAL);
         laneBox.setGravity(Gravity.CENTER_HORIZONTAL);
-        laneBox.setPadding(scaledDp(4, scale), scaledDp(2, scale), scaledDp(4, scale), scaledDp(2, scale));
-        GradientDrawable laneBg = new GradientDrawable();
-        laneBg.setColor(0xCC0F172A);
-        laneBg.setCornerRadius(scaledDp(8, scale));
-        laneBg.setStroke(scaledDp(1, scale), 0x1FFFFFFF);
-        laneBox.setBackground(laneBg);
+        laneBox.setPadding(scaledDp(3, scale), scaledDp(1, scale), scaledDp(3, scale), scaledDp(1, scale));
         laneBox.setVisibility(View.GONE);
-
         LaneBarView lane = new LaneBarView(context);
         lane.setFrameScaleMultiplier(scale);
-        lane.setScaleMultiplier(0.85f);
-        LinearLayout.LayoutParams laneLp = new LinearLayout.LayoutParams(-2, -2);
-        laneLp.setMargins(0, 0, 0, 0);
-        laneBox.addView(lane, laneLp);
+        lane.setScaleMultiplier(0.82f);
+        lane.setCompactSpacing(true);
+        laneBox.addView(lane, new LinearLayout.LayoutParams(-2, -2));
         LinearLayout.LayoutParams laneBoxLp = new LinearLayout.LayoutParams(-2, -2);
         laneBoxLp.setMargins(0, 0, scaledDp(6, scale), 0);
         root.addView(laneBox, laneBoxLp);
 
-        // Turn direction icon before traffic lights
-        ImageView turnDirIcon = new ImageView(context);
-        turnDirIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        turnDirIcon.setVisibility(View.GONE);
-        LinearLayout.LayoutParams turnDirLp = new LinearLayout.LayoutParams(
-                scaledDp(28, scale), scaledDp(28, scale));
-        turnDirLp.setMargins(0, 0, scaledDp(2, scale), 0);
-        root.addView(turnDirIcon, turnDirLp);
-
-        // Traffic lights (same style as classic panel)
         LinearLayout lights = new LinearLayout(context);
         lights.setOrientation(LinearLayout.HORIZONTAL);
         lights.setGravity(Gravity.CENTER);
         lights.setVisibility(View.GONE);
         root.addView(lights, new LinearLayout.LayoutParams(-2, -2));
 
-        // Hidden turn text for data processing compatibility
         TextView turn = new TextView(context);
         turn.setVisibility(View.GONE);
-        turn.setHeight(0);
+        root.addView(turn, new LinearLayout.LayoutParams(0, 0));
+
+        TextView alert = new TextView(context);
+        alert.setVisibility(View.GONE);
+        root.addView(alert, new LinearLayout.LayoutParams(0, 0));
 
         if (cluster) {
             clusterPanel = root;
             clusterModeRow = null;
-            clusterModeText = null;
+            clusterModeText = mode;
             clusterTitleText = null;
             clusterSummaryDivider = null;
             clusterSummaryRow = null;
@@ -1080,13 +1075,13 @@ public class OverlayService extends Service {
             clusterAlertCard = null;
             clusterLimitBadgeText = null;
             clusterAlertCaptionText = null;
-            clusterAlertText = null;
+            clusterAlertText = alert;
             clusterAlertRow = null;
             clusterDetailText = null;
         } else {
             panel = root;
             modeRow = null;
-            modeText = null;
+            modeText = mode;
             titleText = null;
             summaryDivider = null;
             summaryRow = null;
@@ -1096,7 +1091,7 @@ public class OverlayService extends Service {
             turnLeadText = null;
             turnText = turn;
             turnDistanceText = null;
-            turnIconView = turnDirIcon;
+            turnIconView = null;
             turnDistBadge = null;
             turnRowLayout = null;
             navTurnBox = navTurn;
@@ -1109,13 +1104,23 @@ public class OverlayService extends Service {
             alertCard = null;
             limitBadgeText = null;
             alertCaptionText = null;
-            alertText = null;
+            alertText = alert;
             alertRow = null;
             detailText = null;
         }
 
         applyTextPalette();
+        refreshTurnCard();
         return root;
+    }
+
+    private GradientDrawable createDynamicIslandBackground(float scale) {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(scaledDp(999, scale));
+        int opacity = MainActivity.getBackgroundOpacityPercent(this);
+        bg.setColor(withAlpha(0xFF111827, opacity));
+        bg.setStroke(scaledDp(1, scale), withAlpha(0xFFFFFFFF, MainActivity.strokeOpacityForBackground(opacity)));
+        return bg;
     }
 
     private boolean shouldShowStandbyStatusDetails() {
@@ -1163,11 +1168,11 @@ public class OverlayService extends Service {
         view.setGravity(Gravity.CENTER);
         view.setTypeface(Typeface.DEFAULT_BOLD);
         view.setTextColor(Color.WHITE);
-        view.setTextSize(scaledSp(15f, scale));
+        view.setTextSize(scaledSp(20f, scale));
         GradientDrawable bg = new GradientDrawable();
         bg.setShape(GradientDrawable.OVAL);
         bg.setColor(0x12000000);
-        bg.setStroke(scaledDp(2, scale), 0xFFEF4444);
+        bg.setStroke(scaledDp(3, scale), 0xFFEF4444);
         view.setBackground(bg);
         return view;
     }
@@ -1184,12 +1189,13 @@ public class OverlayService extends Service {
         float oldDensity = activeDensity;
         activeDensity = context.getResources().getDisplayMetrics().density;
         try {
-            if (MainActivity.isDynamicIslandUiEnabled(this)) {
-                return buildDynamicIslandPanel(context, scale, cluster);
-            }
-            return MainActivity.isNewOverlayUiEnabled(this)
+            LinearLayout panel = MainActivity.isDynamicIslandUiEnabled(this)
+                    ? buildDynamicIslandPanel(context, scale, cluster)
+                    : MainActivity.isNewOverlayUiEnabled(this)
                     ? buildDashboardPanel(context, scale, cluster)
                     : buildClassicPanel(context, scale, cluster);
+            FontManager.applyToViewTree(context, panel);
+            return panel;
         } finally {
             activeDensity = oldDensity;
         }
@@ -1219,7 +1225,9 @@ public class OverlayService extends Service {
             panelHeight = Math.max(panelHeight, clusterPanel.getMeasuredHeight());
         }
         if (displayWidth > 0 && panelWidth > 0) {
-            x = Math.max(0, Math.min(x, displayWidth - panelWidth));
+            // Keep the user's saved anchor stable. Wide transient content such as
+            // 8-lane guidance should not push the instrument overlay left.
+            x = Math.max(0, Math.min(x, displayWidth - 1));
         }
         if (displayHeight > 0 && panelHeight > 0) {
             y = Math.max(0, Math.min(y, displayHeight - panelHeight));
@@ -1233,6 +1241,17 @@ public class OverlayService extends Service {
         } catch (Throwable t) {
             Log.e(TAG, "cluster position update failed", t);
         }
+    }
+
+    private void applySavedClusterPosition() {
+        if (clusterWindowManager == null || clusterPanel == null || clusterParams == null) {
+            ensureClusterMirror();
+            return;
+        }
+        clusterParams.x = getSavedClusterX();
+        clusterParams.y = getSavedClusterY();
+        updateClusterPosition();
+        saveClusterPosition();
     }
 
     private void dismissClusterMirror() {
@@ -1249,6 +1268,7 @@ public class OverlayService extends Service {
         clusterWindowManager = null;
         clusterParams = null;
         clusterPanel = null;
+        resetClusterPanelWidthStabilizer();
         clusterModeRow = null;
         clusterModeText = null;
         clusterTitleText = null;
@@ -1258,15 +1278,8 @@ public class OverlayService extends Service {
         clusterRoadInfoText = null;
         clusterTurnCard = null;
         clusterTurnLeadText = null;
-        clusterTurnLeadIconView = null;
         clusterTurnText = null;
         clusterTurnDistanceText = null;
-        clusterTurnIconView = null;
-        clusterTurnDistBadge = null;
-        clusterTurnRowLayout = null;
-        clusterNavTurnBox = null;
-        clusterNavTurnIconView = null;
-        clusterNavTurnDistText = null;
         clusterLaneSection = null;
         clusterLaneBar = null;
         clusterLightRow = null;
@@ -1275,7 +1288,6 @@ public class OverlayService extends Service {
         clusterLimitBadgeText = null;
         clusterAlertCaptionText = null;
         clusterAlertText = null;
-        clusterAlertRow = null;
         clusterDetailText = null;
         clusterDisplay = null;
         clusterScale = -1f;
@@ -1523,14 +1535,7 @@ public class OverlayService extends Service {
         copyTextState(alertText, clusterAlertText);
         copyTextState(detailText, clusterDetailText);
         copyVisibility(laneSection, clusterLaneSection);
-        if (turnIconView != null && clusterTurnIconView != null) {
-            applyTurnIcon(clusterTurnIconView, currentTurnIcon);
-            copyVisibility(turnIconView, clusterTurnIconView);
-        }
-        if (turnDistBadge != null && clusterTurnDistBadge != null) {
-            copyTextState(turnDistBadge, clusterTurnDistBadge);
-            copyVisibility(turnDistBadge, clusterTurnDistBadge);
-        }
+        applyCachedLaneData();
         renderTrafficLights();
         applyContentVisibilityPrefs();
         updateClusterPosition();
@@ -1557,10 +1562,111 @@ public class OverlayService extends Service {
     private void refreshPanelVisibility() {
         if (panel != null) {
             panel.setVisibility(hasVisibleChildren(panel) ? View.VISIBLE : View.GONE);
+            schedulePanelWidthStabilizer(panel, false);
         }
         if (clusterPanel != null) {
             clusterPanel.setVisibility(hasVisibleChildren(clusterPanel) ? View.VISIBLE : View.GONE);
+            schedulePanelWidthStabilizer(clusterPanel, true);
         }
+    }
+
+    private void schedulePanelWidthStabilizer(LinearLayout target, boolean cluster) {
+        if (target == null) {
+            return;
+        }
+        target.post(() -> stabilizePanelWidth(target, cluster));
+    }
+
+    private void stabilizePanelWidth(LinearLayout target, boolean cluster) {
+        if (target == null) {
+            return;
+        }
+        int baseMin = cluster ? clusterPanelBaseMinWidth : mainPanelBaseMinWidth;
+        if (baseMin < 0) {
+            baseMin = Math.max(0, target.getMinimumWidth());
+            if (cluster) {
+                clusterPanelBaseMinWidth = baseMin;
+            } else {
+                mainPanelBaseMinWidth = baseMin;
+            }
+        }
+
+        int width = target.getWidth();
+        if (width <= 0) {
+            int wSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
+            int hSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
+            target.measure(wSpec, hSpec);
+            width = target.getMeasuredWidth();
+        }
+
+        int held = cluster ? clusterPanelHeldMinWidth : mainPanelHeldMinWidth;
+        int nextMin = Math.max(baseMin, Math.max(held, width));
+        boolean expanded = nextMin > held;
+        if (cluster) {
+            clusterPanelHeldMinWidth = nextMin;
+        } else {
+            mainPanelHeldMinWidth = nextMin;
+        }
+        if (target.getMinimumWidth() != nextMin) {
+            target.setMinimumWidth(nextMin);
+            target.requestLayout();
+        }
+
+        Runnable oldUnlock = cluster ? clusterPanelWidthUnlock : mainPanelWidthUnlock;
+        if (!expanded && oldUnlock != null) {
+            return;
+        }
+        if (oldUnlock != null) {
+            mainHandler.removeCallbacks(oldUnlock);
+        }
+        Runnable unlock = () -> unlockPanelWidth(target, cluster);
+        if (cluster) {
+            clusterPanelWidthUnlock = unlock;
+        } else {
+            mainPanelWidthUnlock = unlock;
+        }
+        mainHandler.postDelayed(unlock, PANEL_WIDTH_SHRINK_DELAY_MS);
+    }
+
+    private void unlockPanelWidth(LinearLayout target, boolean cluster) {
+        if (target == null || target != (cluster ? clusterPanel : panel)) {
+            return;
+        }
+        int baseMin = Math.max(0, cluster ? clusterPanelBaseMinWidth : mainPanelBaseMinWidth);
+        if (cluster) {
+            clusterPanelHeldMinWidth = 0;
+            clusterPanelWidthUnlock = null;
+        } else {
+            mainPanelHeldMinWidth = 0;
+            mainPanelWidthUnlock = null;
+        }
+        if (target.getMinimumWidth() != baseMin) {
+            target.setMinimumWidth(baseMin);
+            target.requestLayout();
+        }
+        if (cluster) {
+            updateClusterPosition();
+        } else {
+            updateOverlayPosition();
+        }
+    }
+
+    private void resetMainPanelWidthStabilizer() {
+        if (mainPanelWidthUnlock != null) {
+            mainHandler.removeCallbacks(mainPanelWidthUnlock);
+            mainPanelWidthUnlock = null;
+        }
+        mainPanelBaseMinWidth = -1;
+        mainPanelHeldMinWidth = 0;
+    }
+
+    private void resetClusterPanelWidthStabilizer() {
+        if (clusterPanelWidthUnlock != null) {
+            mainHandler.removeCallbacks(clusterPanelWidthUnlock);
+            clusterPanelWidthUnlock = null;
+        }
+        clusterPanelBaseMinWidth = -1;
+        clusterPanelHeldMinWidth = 0;
     }
 
     private boolean hasVisibleChildren(LinearLayout layout) {
@@ -1618,6 +1724,7 @@ public class OverlayService extends Service {
             }
         }
         panel = null;
+        resetMainPanelWidthStabilizer();
         modeRow = null;
         modeText = null;
         titleText = null;
@@ -1692,6 +1799,10 @@ public class OverlayService extends Service {
             clusterScale = -1f;
             ensureClusterMirror();
             stopSelfIfNoVisuals();
+            return;
+        }
+        if (MainActivity.ACTION_CLUSTER_POSITION_CHANGED.equals(action)) {
+            applySavedClusterPosition();
             return;
         }
         if (MainActivity.ACTION_OVERLAY_STYLE_CHANGED.equals(action)) {
@@ -1833,7 +1944,7 @@ public class OverlayService extends Service {
             turnDistanceText.setTextColor(primary);
         }
         if (etaText != null) {
-            etaText.setTextColor(0xFFFBBF24);
+            etaText.setTextColor(primary);
         }
         if (alertCaptionText != null) {
             alertCaptionText.setTextColor(0xFFCBD5E1);
@@ -1844,6 +1955,10 @@ public class OverlayService extends Service {
         if (alertText != null) {
             alertText.setTextColor(primary);
         }
+        if (navTurnDistText != null) {
+            navTurnDistText.setTextColor(primary);
+        }
+        applyEdogAlertTextColor(alertRow, primary);
         if (detailText != null) {
             detailText.setTextColor(detail);
         }
@@ -1869,7 +1984,7 @@ public class OverlayService extends Service {
             clusterTurnDistanceText.setTextColor(primary);
         }
         if (clusterEtaText != null) {
-            clusterEtaText.setTextColor(0xFFFBBF24);
+            clusterEtaText.setTextColor(primary);
         }
         if (clusterAlertCaptionText != null) {
             clusterAlertCaptionText.setTextColor(0xFFCBD5E1);
@@ -1880,8 +1995,32 @@ public class OverlayService extends Service {
         if (clusterAlertText != null) {
             clusterAlertText.setTextColor(primary);
         }
+        if (clusterNavTurnDistText != null) {
+            clusterNavTurnDistText.setTextColor(primary);
+        }
+        applyEdogAlertTextColor(clusterAlertRow, primary);
         if (clusterDetailText != null) {
             clusterDetailText.setTextColor(detail);
+        }
+    }
+
+    private void applyEdogAlertTextColor(LinearLayout row, int primary) {
+        if (row == null) {
+            return;
+        }
+        View cameraBox = row.findViewWithTag("camera_box");
+        if (cameraBox instanceof LinearLayout) {
+            LinearLayout box = (LinearLayout) cameraBox;
+            if (box.getChildCount() > 1 && box.getChildAt(1) instanceof TextView) {
+                ((TextView) box.getChildAt(1)).setTextColor(primary);
+            }
+        }
+        View lightBox = row.findViewWithTag("light_box");
+        if (lightBox instanceof LinearLayout) {
+            LinearLayout box = (LinearLayout) lightBox;
+            if (box.getChildCount() > 1 && box.getChildAt(1) instanceof TextView) {
+                ((TextView) box.getChildAt(1)).setTextColor(primary);
+            }
         }
     }
 
@@ -1945,64 +2084,98 @@ public class OverlayService extends Service {
             applyTurnIcon(clusterTurnLeadIconView, currentTurnIcon);
             clusterTurnLeadIconView.setVisibility(currentTurnIcon > 0 ? View.VISIBLE : View.GONE);
         }
+        String turnRoadText = currentTurnRoad;
+        if (turnDistanceText == null && !TextUtils.isEmpty(currentTurnDistance)) {
+            turnRoadText = TextUtils.isEmpty(turnRoadText)
+                    ? currentTurnDistance
+                    : turnRoadText + "  " + currentTurnDistance;
+        }
+        String clusterTurnRoadText = currentTurnRoad;
+        if (clusterTurnDistanceText == null && !TextUtils.isEmpty(currentTurnDistance)) {
+            clusterTurnRoadText = TextUtils.isEmpty(clusterTurnRoadText)
+                    ? currentTurnDistance
+                    : clusterTurnRoadText + "  " + currentTurnDistance;
+        }
         if (turnText != null) {
-            turnText.setText(currentTurnRoad);
+            turnText.setText(turnRoadText);
+            turnText.setVisibility(TextUtils.isEmpty(turnRoadText) ? View.GONE : View.VISIBLE);
         }
         if (clusterTurnText != null) {
-            clusterTurnText.setText(currentTurnRoad);
+            clusterTurnText.setText(clusterTurnRoadText);
+            clusterTurnText.setVisibility(TextUtils.isEmpty(clusterTurnRoadText) ? View.GONE : View.VISIBLE);
         }
         if (turnDistanceText != null) {
             turnDistanceText.setText(currentTurnDistance);
+            turnDistanceText.setVisibility(TextUtils.isEmpty(currentTurnDistance) ? View.GONE : View.VISIBLE);
         }
         if (clusterTurnDistanceText != null) {
             clusterTurnDistanceText.setText(currentTurnDistance);
+            clusterTurnDistanceText.setVisibility(TextUtils.isEmpty(currentTurnDistance) ? View.GONE : View.VISIBLE);
         }
         if (turnIconView != null) {
             applyTurnIcon(turnIconView, currentTurnIcon);
+            turnIconView.setVisibility(currentTurnIcon > 0 ? View.VISIBLE : View.GONE);
         }
         if (clusterTurnIconView != null) {
             applyTurnIcon(clusterTurnIconView, currentTurnIcon);
+            clusterTurnIconView.setVisibility(currentTurnIcon > 0 ? View.VISIBLE : View.GONE);
         }
-        if (turnDistBadge != null) {
-            if (!TextUtils.isEmpty(currentTurnDistance)) {
-                turnDistBadge.setText(currentTurnDistance);
-                turnDistBadge.setVisibility(View.VISIBLE);
-            } else {
-                turnDistBadge.setVisibility(View.GONE);
-            }
+        updateDistanceBadge(turnDistBadge, currentTurnDistance);
+        updateDistanceBadge(clusterTurnDistBadge, currentTurnDistance);
+        updateNavTurn(navTurnBox, navTurnIconView, navTurnDistText);
+        updateNavTurn(clusterNavTurnBox, clusterNavTurnIconView, clusterNavTurnDistText);
+        syncLaneVisibility();
+    }
+
+    private void clearTurnState() {
+        currentTurnLead = "";
+        currentTurnRoad = "";
+        currentTurnDistance = "";
+        currentTurnIcon = 0;
+        navigationTurnDir = -1;
+        refreshTurnCard();
+        setPairedVisibility(turnCard, clusterTurnCard, false);
+        setPairedVisibility(turnRowLayout, clusterTurnRowLayout, false);
+        setPairedVisibility(turnText, clusterTurnText, false);
+        setPairedVisibility(turnDistanceText, clusterTurnDistanceText, false);
+        setPairedVisibility(turnIconView, clusterTurnIconView, false);
+        if (turnIconView != null) {
+            turnIconView.setImageDrawable(null);
         }
-        if (clusterTurnDistBadge != null) {
-            if (!TextUtils.isEmpty(currentTurnDistance)) {
-                clusterTurnDistBadge.setText(currentTurnDistance);
-                clusterTurnDistBadge.setVisibility(View.VISIBLE);
-            } else {
-                clusterTurnDistBadge.setVisibility(View.GONE);
-            }
+        if (clusterTurnIconView != null) {
+            clusterTurnIconView.setImageDrawable(null);
         }
-        // Dynamic island nav turn (priority over lane info)
+        if (turnLeadIconView != null) {
+            turnLeadIconView.setImageDrawable(null);
+            turnLeadIconView.setVisibility(View.GONE);
+        }
+        if (clusterTurnLeadIconView != null) {
+            clusterTurnLeadIconView.setImageDrawable(null);
+            clusterTurnLeadIconView.setVisibility(View.GONE);
+        }
         if (navTurnBox != null) {
-            if (currentTurnIcon > 0) {
-                applyTurnIcon(navTurnIconView, currentTurnIcon);
-                navTurnDistText.setText(currentTurnDistance);
-                navTurnBox.setVisibility(View.VISIBLE);
-            } else {
-                navTurnBox.setVisibility(View.GONE);
-            }
+            navTurnBox.setVisibility(View.GONE);
         }
         if (clusterNavTurnBox != null) {
-            if (currentTurnIcon > 0) {
-                applyTurnIcon(clusterNavTurnIconView, currentTurnIcon);
-                clusterNavTurnDistText.setText(currentTurnDistance);
-                clusterNavTurnBox.setVisibility(View.VISIBLE);
-            } else {
-                clusterNavTurnBox.setVisibility(View.GONE);
-            }
+            clusterNavTurnBox.setVisibility(View.GONE);
+        }
+        if (navTurnIconView != null) {
+            navTurnIconView.setImageDrawable(null);
+        }
+        if (clusterNavTurnIconView != null) {
+            clusterNavTurnIconView.setImageDrawable(null);
+        }
+        if (navTurnDistText != null) {
+            navTurnDistText.setText("");
+        }
+        if (clusterNavTurnDistText != null) {
+            clusterNavTurnDistText.setText("");
         }
         syncLaneVisibility();
     }
 
     private void refreshAlertCard() {
-        String badge = currentLimitSpeed > 0 ? String.valueOf(currentLimitSpeed) : "——";
+        String badge = currentLimitSpeed > 0 ? String.valueOf(currentLimitSpeed) : "--";
         if (limitBadgeText != null) {
             limitBadgeText.setText(badge);
         }
@@ -2023,8 +2196,9 @@ public class OverlayService extends Service {
 
     private void syncTurnVisibility() {
         boolean visible = MainActivity.isTurnVisible(this)
-                && turnText != null
-                && !TextUtils.isEmpty(turnText.getText());
+                && ((turnText != null && !TextUtils.isEmpty(turnText.getText()))
+                || (turnDistanceText != null && !TextUtils.isEmpty(turnDistanceText.getText()))
+                || currentTurnIcon > 0);
         if (turnRowLayout != null || clusterTurnRowLayout != null) {
             setPairedVisibility(turnRowLayout, clusterTurnRowLayout, visible);
         } else if (turnCard != null || clusterTurnCard != null) {
@@ -2115,7 +2289,6 @@ public class OverlayService extends Service {
 
         int iconSize = scaledDp(24, scale);
 
-        // Speed limit: icon with value overlaid inside the blank circle
         FrameLayout speedBox = new FrameLayout(context);
         speedBox.setTag("speed_box");
         ImageView speedIcon = new ImageView(context);
@@ -2124,7 +2297,7 @@ public class OverlayService extends Service {
         speedBox.addView(speedIcon, new FrameLayout.LayoutParams(iconSize, iconSize));
         TextView speedText = new TextView(context);
         speedText.setTextColor(0xFFDC2626);
-        speedText.setTextSize(scaledSp(11f, scale));
+        speedText.setTextSize(scaledSp(10.5f, scale));
         speedText.setTypeface(Typeface.DEFAULT_BOLD);
         speedText.setGravity(Gravity.CENTER);
         speedBox.addView(speedText, new FrameLayout.LayoutParams(iconSize, iconSize));
@@ -2133,7 +2306,6 @@ public class OverlayService extends Service {
         speedLp.setMargins(0, 0, scaledDp(6, scale), 0);
         row.addView(speedBox, speedLp);
 
-        // Camera: icon + distance text
         LinearLayout cameraBox = new LinearLayout(context);
         cameraBox.setTag("camera_box");
         cameraBox.setOrientation(LinearLayout.HORIZONTAL);
@@ -2144,7 +2316,7 @@ public class OverlayService extends Service {
         cameraIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
         cameraBox.addView(cameraIcon, new LinearLayout.LayoutParams(iconSize, iconSize));
         TextView cameraText = new TextView(context);
-        cameraText.setTextColor(0xFFFFFFFF);
+        cameraText.setTextColor(primaryTextColor());
         cameraText.setTextSize(scaledSp(12f, scale));
         cameraText.setTypeface(Typeface.DEFAULT_BOLD);
         cameraBox.addView(cameraText, new LinearLayout.LayoutParams(-2, -2));
@@ -2152,7 +2324,6 @@ public class OverlayService extends Service {
         cameraLp.setMargins(0, 0, scaledDp(6, scale), 0);
         row.addView(cameraBox, cameraLp);
 
-        // Traffic light: icon + red count
         LinearLayout lightBox = new LinearLayout(context);
         lightBox.setTag("light_box");
         lightBox.setOrientation(LinearLayout.HORIZONTAL);
@@ -2163,13 +2334,102 @@ public class OverlayService extends Service {
         lightIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
         lightBox.addView(lightIcon, new LinearLayout.LayoutParams(iconSize, iconSize));
         TextView lightCount = new TextView(context);
-        lightCount.setTextColor(0xFFEF4444);
-        lightCount.setTextSize(scaledSp(14f, scale));
+        lightCount.setTextColor(primaryTextColor());
+        lightCount.setTextSize(scaledSp(13f, scale));
         lightCount.setTypeface(Typeface.DEFAULT_BOLD);
         lightBox.addView(lightCount, new LinearLayout.LayoutParams(-2, -2));
         row.addView(lightBox, new LinearLayout.LayoutParams(-2, -2));
 
+        FontManager.applyToViewTree(context, row);
         return row;
+    }
+
+    private void updateDistanceBadge(TextView badge, String distance) {
+        if (badge == null) {
+            return;
+        }
+        if (TextUtils.isEmpty(distance)) {
+            badge.setText("");
+            badge.setVisibility(View.GONE);
+            return;
+        }
+        badge.setText(distance);
+        badge.setVisibility(View.VISIBLE);
+    }
+
+    private void updateNavTurn(LinearLayout box, ImageView iconView, TextView distanceText) {
+        if (box == null) {
+            return;
+        }
+        if (currentTurnIcon <= 0) {
+            box.setVisibility(View.GONE);
+            return;
+        }
+        applyTurnIcon(iconView, currentTurnIcon);
+        if (distanceText != null) {
+            distanceText.setText(TextUtils.isEmpty(currentTurnDistance) ? "" : currentTurnDistance);
+        }
+        box.setVisibility(View.VISIBLE);
+    }
+
+    private void applyTurnIcon(ImageView view, int icon) {
+        if (view == null) {
+            return;
+        }
+        int resId = turnIconResource(icon);
+        float rotation = 0f;
+        float scaleX = 1f;
+        if (resId == 0) {
+            resId = fallbackTurnIconResource(icon);
+        }
+        view.setImageResource(resId);
+        view.setRotation(rotation);
+        view.setScaleX(scaleX);
+        view.setVisibility(View.VISIBLE);
+    }
+
+    private int turnIconResource(int icon) {
+        if (icon <= 0) {
+            return 0;
+        }
+        // The broadcast's 50+ action codes are not the same namespace as sou50+ resources:
+        // sou50-sou69 are roundabout-exit artwork, while values like NEW_ICON=65 can mean
+        // "enter/continue on main road". Only direct-map the base AutoNavi turn icons here.
+        if (icon > 28) {
+            return 0;
+        }
+        int id = getResources().getIdentifier("sou" + icon + "_night", "drawable", getPackageName());
+        if (id != 0) {
+            return id;
+        }
+        return getResources().getIdentifier("sou" + icon + "_night_a530", "drawable", getPackageName());
+    }
+
+    private int fallbackTurnIconResource(int icon) {
+        switch (icon) {
+            case 2:
+                return R.drawable.turn_left;
+            case 3:
+            case 7:
+                return R.drawable.turn_right;
+            case 4:
+            case 6:
+                return R.drawable.turn_left_front;
+            case 5:
+                return R.drawable.turn_right_front;
+            case 8:
+            case 10:
+            case 11:
+            case 12:
+                return R.drawable.turn_uturn;
+            case 19:
+                return R.drawable.turn_uturn_right;
+            case 1:
+            case 9:
+            case 20:
+            default:
+                return R.drawable.turn_straight;
+        }
     }
 
     private void updateModeFromExtras(Bundle extras) {
@@ -2202,9 +2462,7 @@ public class OverlayService extends Service {
             currentRoadName = "";
             currentHeadingSummary = "";
             currentRoadTypeSummary = "";
-            currentTurnLead = "";
-            currentTurnRoad = "";
-            currentTurnDistance = "";
+            clearTurnState();
         } else if (keyType == 10019 && state == 8) {
             mode = "\u5bfc\u822a";
             inCruiseMode = false;
@@ -2229,35 +2487,12 @@ public class OverlayService extends Service {
             }
             trafficLights.clear();
             hideLaneData();
-            if (turnText != null) {
-                turnText.setVisibility(View.GONE);
-            }
-            if (clusterTurnText != null) {
-                clusterTurnText.setVisibility(View.GONE);
-            }
-            if (turnRowLayout != null) {
-                turnRowLayout.setVisibility(View.GONE);
-            }
-            if (clusterTurnRowLayout != null) {
-                clusterTurnRowLayout.setVisibility(View.GONE);
-            }
-            if (navTurnBox != null) {
-                navTurnBox.setVisibility(View.GONE);
-            }
-            if (clusterNavTurnBox != null) {
-                clusterNavTurnBox.setVisibility(View.GONE);
-            }
+            clearTurnState();
             if (alertText != null) {
                 alertText.setVisibility(View.GONE);
             }
             if (clusterAlertText != null) {
                 clusterAlertText.setVisibility(View.GONE);
-            }
-            if (alertRow != null) {
-                alertRow.setVisibility(View.GONE);
-            }
-            if (clusterAlertRow != null) {
-                clusterAlertRow.setVisibility(View.GONE);
             }
             if (detailText != null) {
                 detailText.setVisibility(View.GONE);
@@ -2265,10 +2500,6 @@ public class OverlayService extends Service {
             if (clusterDetailText != null) {
                 clusterDetailText.setVisibility(View.GONE);
             }
-            currentTurnLead = "";
-            currentTurnRoad = "";
-            currentTurnDistance = "";
-            currentTurnIcon = 0;
             currentLimitSpeed = -1;
         } else if (type == 1) {
             mode = "\u6a21\u62df\u5bfc\u822a";
@@ -2283,9 +2514,7 @@ public class OverlayService extends Service {
             currentRoadName = "";
             currentHeadingSummary = "";
             currentRoadTypeSummary = "";
-            currentTurnLead = "";
-            currentTurnRoad = "";
-            currentTurnDistance = "";
+            clearTurnState();
         }
 
         StringBuilder sb = new StringBuilder(mode);
@@ -2307,22 +2536,9 @@ public class OverlayService extends Service {
         if (!TextUtils.isEmpty(road)) {
             currentRoadName = road;
         }
-        if (!TextUtils.isEmpty(road)) {
-            SpannableString spannable = new SpannableString(text);
-            int roadStart = text.indexOf(" · ") + 3;
-            int speedPart = text.indexOf(" · ", roadStart);
-            int roadEnd = speedPart > 0 ? speedPart : text.length();
-            spannable.setSpan(new StyleSpan(Typeface.BOLD), roadStart, roadEnd, 0);
-            spannable.setSpan(new ForegroundColorSpan(0xFFFFD700), roadStart, roadEnd, 0);
-            modeText.setText(spannable);
-            if (clusterModeText != null) {
-                clusterModeText.setText(spannable);
-            }
-        } else {
-            modeText.setText(text);
-            if (clusterModeText != null) {
-                clusterModeText.setText(text);
-            }
+        modeText.setText(text);
+        if (clusterModeText != null) {
+            clusterModeText.setText(text);
         }
         refreshRoadTitle();
         refreshAlertCard();
@@ -2341,24 +2557,12 @@ public class OverlayService extends Service {
             return;
         }
         if (inCruiseMode) {
-            currentTurnLead = "";
-            currentTurnRoad = "";
-            currentTurnDistance = "";
-            currentTurnIcon = 0;
-            refreshTurnCard();
-            setPairedVisibility(turnCard, clusterTurnCard, false);
-            setPairedVisibility(turnRowLayout, clusterTurnRowLayout, false);
+            clearTurnState();
             return;
         }
         int icon = intValue(extras, "NEW_ICON", intValue(extras, "ICON", 0));
         if (icon <= 0) {
-            currentTurnLead = "";
-            currentTurnRoad = "";
-            currentTurnDistance = "";
-            currentTurnIcon = 0;
-            refreshTurnCard();
-            setPairedVisibility(turnCard, clusterTurnCard, false);
-            setPairedVisibility(turnRowLayout, clusterTurnRowLayout, false);
+            clearTurnState();
             return;
         }
         navigationTurnDir = turnIconToTrafficDir(icon);
@@ -2370,9 +2574,11 @@ public class OverlayService extends Service {
                 distance = formatDistance(meters);
             }
         }
-        String nextRoad = valueString(extras, "NEXT_ROAD_NAME", "nextRoadName");
-        currentTurnLead = "下一路口";
-        currentTurnRoad = TextUtils.isEmpty(nextRoad) ? currentRoadName : nextRoad;
+        String nextRoad = valueString(extras, "NEXT_ROAD_NAME", "nextRoadName", "NEXT_ROAD",
+                "NEXT_ROAD_NAME_AUTO", "SEG_ROAD_NAME", "NEXT_SEG_ROAD_NAME", "ROAD_NAME", "roadName");
+        currentTurnLead = "\u4e0b\u4e00\u8def\u53e3";
+        currentTurnRoad = !TextUtils.isEmpty(nextRoad) ? nextRoad
+                : !TextUtils.isEmpty(currentRoadName) ? currentRoadName : "\u4e0b\u4e00\u8def\u53e3";
         currentTurnDistance = TextUtils.isEmpty(distance) ? "" : distance;
         refreshTurnCard();
         syncTurnVisibility();
@@ -2932,7 +3138,7 @@ public class OverlayService extends Service {
     private void putLightState(HashMap<Integer, LightState> target, int key, int dir,
                                int status, int red, int green, int seconds) {
         LightState state = new LightState();
-        state.dir = dir;
+        state.dir = normalizeLightDirectionForDisplay(dir, status);
         state.status = status;
         state.seconds = seconds;
         state.color = colorForStatus(status, red, green);
@@ -2942,6 +3148,13 @@ public class OverlayService extends Service {
         if (old == null || preferLightState(state, old)) {
             target.put(key, state);
         }
+    }
+
+    private int normalizeLightDirectionForDisplay(int dir, int status) {
+        if (!inCruiseMode && dir == 0 && isYellowLightStatus(status) && navigationTurnDir >= 0) {
+            return navigationTurnDir;
+        }
+        return dir;
     }
 
     private boolean preferLightState(LightState candidate, LightState old) {
@@ -3006,8 +3219,8 @@ public class OverlayService extends Service {
         if (clusterLightRow != null) {
             clusterLightRow.removeAllViews();
         }
-        boolean showMainDirectionLabel = inCruiseMode && keys.size() > 1;
-        boolean showClusterDirectionLabel = showMainDirectionLabel || clusterLightRow != null;
+        boolean showMainDirectionLabel = true;
+        boolean showClusterDirectionLabel = true;
         for (Integer key : keys) {
             LightState state = trafficLights.get(key);
             if (state == null) {
@@ -3074,47 +3287,174 @@ public class OverlayService extends Service {
         float oldDensity = activeDensity;
         activeDensity = context.getResources().getDisplayMetrics().density;
         try {
-            LinearLayout pill = new LinearLayout(context);
-            pill.setOrientation(LinearLayout.HORIZONTAL);
-            pill.setGravity(Gravity.CENTER);
-            pill.setMinimumWidth(scaledDp(inCruiseMode ? 62 : 54, scale));
-            pill.setMinimumHeight(scaledDp(34, scale));
-            pill.setPadding(scaledDp(8, scale), 0, scaledDp(10, scale), scaledDp(1, scale));
-            GradientDrawable bg = new GradientDrawable();
-            bg.setColor(state.color);
-            bg.setCornerRadius(scaledDp(18, scale));
-            pill.setBackground(bg);
+            LinearLayout view = new LinearLayout(context);
+            view.setOrientation(LinearLayout.HORIZONTAL);
+            view.setGravity(Gravity.CENTER);
+            boolean showArrowBadge = showDirectionLabel && state.dir >= 0;
+            boolean dynamicIsland = MainActivity.isDynamicIslandUiEnabled(this);
+            view.setMinimumWidth(scaledDp(showArrowBadge ? (dynamicIsland ? 86 : 104) : (dynamicIsland ? 72 : 88), scale));
+            view.setMinimumHeight(scaledDp(dynamicIsland ? 42 : 50, scale));
+            view.setPadding(scaledDp(showArrowBadge ? (dynamicIsland ? 6 : 7) : (dynamicIsland ? 8 : 10), scale),
+                    scaledDp(dynamicIsland ? 4 : 5, scale),
+                    scaledDp(showArrowBadge ? (dynamicIsland ? 10 : 13) : (dynamicIsland ? 9 : 12), scale),
+                    scaledDp(dynamicIsland ? 4 : 5, scale));
 
-            boolean useImage = showDirectionLabel && (state.dir == 1 || state.dir == 2 || state.dir == 4);
-            if (useImage) {
-                ImageView arrow = new ImageView(context);
-                int resId = state.dir == 1 ? R.drawable.turn_left
-                        : state.dir == 2 ? R.drawable.turn_right
-                        : R.drawable.turn_straight;
-                arrow.setImageResource(resId);
-                int imgSize = scaledDp(30, scale);
-                LinearLayout.LayoutParams imgLp = new LinearLayout.LayoutParams(imgSize, imgSize);
-                imgLp.setMargins(0, 0, scaledDp(4, scale), 0);
-                arrow.setLayoutParams(imgLp);
-                pill.addView(arrow);
+            GradientDrawable bg = new GradientDrawable();
+            bg.setColor(withAlpha(state.color, 92));
+            bg.setCornerRadius(scaledDp(dynamicIsland ? 21 : 25, scale));
+            bg.setStroke(scaledDp(1, scale), withAlpha(0xFFFFFFFF, 72));
+            view.setBackground(bg);
+
+            if (showArrowBadge) {
+                View arrow = diyArrowBadge(context, state, scale);
+                LinearLayout.LayoutParams arrowLp = new LinearLayout.LayoutParams(
+                        scaledDp(dynamicIsland ? 28 : 34, scale), scaledDp(dynamicIsland ? 28 : 34, scale));
+                arrowLp.setMargins(0, 0, scaledDp(dynamicIsland ? 6 : 8, scale), 0);
+                view.addView(arrow, arrowLp);
+            } else {
+                TextView dot = new TextView(context);
+                GradientDrawable dotBg = new GradientDrawable();
+                dotBg.setShape(GradientDrawable.OVAL);
+                dotBg.setColor(state.color);
+                dotBg.setStroke(scaledDp(3, scale), withAlpha(0xFFFFFFFF, 76));
+                dot.setBackground(dotBg);
+                LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(
+                        scaledDp(dynamicIsland ? 28 : 34, scale), scaledDp(dynamicIsland ? 28 : 34, scale));
+                dotLp.setMargins(0, 0, scaledDp(dynamicIsland ? 6 : 9, scale), 0);
+                view.addView(dot, dotLp);
             }
 
-            TextView labelView = new TextView(context);
-            labelView.setTextColor(Color.WHITE);
-            labelView.setTextSize(scaledSp(20f, scale));
-            labelView.setTypeface(Typeface.DEFAULT_BOLD);
-            labelView.setGravity(Gravity.CENTER);
-            String label = showDirectionLabel && state.dir >= 0 && !useImage ? directionLabel(state.dir) : "";
-            labelView.setText(label + seconds);
-            pill.addView(labelView, new LinearLayout.LayoutParams(-2, -2));
+            LinearLayout textColumn = new LinearLayout(context);
+            textColumn.setOrientation(LinearLayout.VERTICAL);
+            textColumn.setGravity(Gravity.CENTER);
 
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, scaledDp(36, scale));
-            lp.setMargins(scaledDp(3, scale), scaledDp(3, scale), scaledDp(3, scale), scaledDp(3, scale));
-            pill.setLayoutParams(lp);
-            return pill;
+            TextView time = new TextView(context);
+            time.setText(String.valueOf(seconds));
+            time.setTextColor(Color.WHITE);
+            time.setTextSize(scaledSp(dynamicIsland ? 20f : 24f, scale));
+            time.setTypeface(Typeface.DEFAULT_BOLD);
+            time.setGravity(Gravity.CENTER);
+            textColumn.addView(time, new LinearLayout.LayoutParams(-2, -2));
+
+            view.addView(textColumn, new LinearLayout.LayoutParams(-2, -2));
+
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, scaledDp(dynamicIsland ? 42 : 50, scale));
+            lp.setMargins(scaledDp(dynamicIsland ? 3 : 4, scale), scaledDp(3, scale),
+                    scaledDp(dynamicIsland ? 3 : 4, scale), scaledDp(3, scale));
+            view.setLayoutParams(lp);
+            FontManager.applyToViewTree(context, view);
+            return view;
         } finally {
             activeDensity = oldDensity;
         }
+    }
+
+    private View diyArrowBadge(Context context, LightState state, float scale) {
+        Bitmap bitmap = loadDiyArrowBitmap(state.dir);
+        if (bitmap != null) {
+            ImageView image = new ImageView(context);
+            image.setImageBitmap(bitmap);
+            image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            image.setAdjustViewBounds(false);
+            image.setPadding(scaledDp(1, scale), scaledDp(1, scale), scaledDp(1, scale), scaledDp(1, scale));
+            return image;
+        }
+
+        ImageView image = new ImageView(context);
+        image.setImageResource(defaultCruiseArrowResource(state.dir));
+        image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        image.setAdjustViewBounds(false);
+        image.setPadding(scaledDp(1, scale), scaledDp(1, scale), scaledDp(1, scale), scaledDp(1, scale));
+        return image;
+    }
+
+    private int defaultCruiseArrowResource(int dir) {
+        int souIcon = trafficDirToTurnIcon(dir);
+        int souRes = turnIconResource(souIcon);
+        if (souRes != 0) {
+            return souRes;
+        }
+        if (dir == 0) {
+            return R.drawable.turn_uturn;
+        }
+        if (dir == 1 || dir == 5 || dir == 6) {
+            return R.drawable.turn_left;
+        }
+        if (dir == 2 || dir == 3 || dir == 7 || dir == 8) {
+            return R.drawable.turn_right;
+        }
+        return R.drawable.turn_straight;
+    }
+
+    private int trafficDirToTurnIcon(int dir) {
+        if (dir == 0) {
+            return 8;
+        }
+        if (dir == 1 || dir == 5 || dir == 6) {
+            return 2;
+        }
+        if (dir == 2 || dir == 3 || dir == 7 || dir == 8) {
+            return 3;
+        }
+        return 9;
+    }
+
+    private Bitmap loadDiyArrowBitmap(int dir) {
+        String[] fileNames = diyArrowFileNames(dir);
+        if (fileNames.length == 0) {
+            return null;
+        }
+        File diyDir = new File(Environment.getExternalStorageDirectory(), DIY_DIR_NAME);
+        try {
+            if (!diyDir.isDirectory()) {
+                diyDir.mkdirs();
+            }
+        } catch (Throwable ignored) {
+        }
+        for (String fileName : fileNames) {
+            try {
+                File file = new File(diyDir, fileName);
+                if (!file.isFile()) {
+                    diyArrowCache.remove(fileName);
+                    diyArrowModified.remove(fileName);
+                    continue;
+                }
+                long modified = file.lastModified();
+                Long cachedModified = diyArrowModified.get(fileName);
+                Bitmap cached = diyArrowCache.get(fileName);
+                if (cached != null && cachedModified != null && cachedModified == modified && !cached.isRecycled()) {
+                    return cached;
+                }
+                Bitmap bitmap = BitmapFactory.decodeFile(file.getAbsolutePath());
+                if (bitmap == null) {
+                    diyArrowCache.remove(fileName);
+                    diyArrowModified.remove(fileName);
+                    continue;
+                }
+                diyArrowCache.put(fileName, bitmap);
+                diyArrowModified.put(fileName, modified);
+                return bitmap;
+            } catch (Throwable t) {
+                Log.d(TAG, "load diy arrow failed: " + fileName, t);
+            }
+        }
+        return null;
+    }
+
+    private String[] diyArrowFileNames(int dir) {
+        String base;
+        if (dir == 1 || dir == 5 || dir == 6) {
+            base = "cruise_arrow_left";
+        } else if (dir == 2 || dir == 3 || dir == 7 || dir == 8) {
+            base = "cruise_arrow_right";
+        } else if (dir == 4) {
+            base = "cruise_arrow_straight";
+        } else if (dir == 0) {
+            base = "cruise_arrow_uturn";
+        } else {
+            base = "cruise_arrow_default";
+        }
+        return new String[]{base + ".png", base + ".webp", base + ".jpg", base + ".jpeg"};
     }
 
     private int currentLightSeconds(LightState state, long now) {
@@ -3173,47 +3513,6 @@ public class OverlayService extends Service {
             return 0;
         }
         return 4;
-    }
-
-    private void applyTurnIcon(ImageView view, int icon) {
-        int resId = 0;
-        float rotation = 0;
-        float scaleX = 1;
-        switch (icon) {
-            case 1: case 9: case 20: // 直行
-                resId = R.drawable.icon_straight;
-                break;
-            case 2: // 左转
-                resId = R.drawable.icon_turn_left;
-                break;
-            case 3: case 7: // 右转
-                resId = R.drawable.icon_turn_left;
-                scaleX = -1;
-                break;
-            case 4: case 6: // 左前
-                resId = R.drawable.icon_turn_left;
-                rotation = -35;
-                break;
-            case 5: // 右前
-                resId = R.drawable.icon_turn_left;
-                rotation = -35;
-                scaleX = -1;
-                break;
-            case 8: case 10: case 11: case 12: // 掉头(左)
-                resId = R.drawable.lane_pdf_20;
-                break;
-            case 19: // 掉头(右)
-                resId = R.drawable.lane_pdf_23;
-                break;
-            default:
-                resId = R.drawable.icon_straight;
-                break;
-        }
-        if (resId != 0) {
-            view.setImageResource(resId);
-            view.setRotation(rotation);
-            view.setScaleX(scaleX);
-        }
     }
 
     private int colorForStatus(int status, int red, int green) {
@@ -3287,6 +3586,13 @@ public class OverlayService extends Service {
             return "\u2197";
         }
         return dir >= 0 ? ("D" + dir) : "\u524d";
+    }
+
+    private String bearingToCompass(int bearing) {
+        int normalized = ((bearing % 360) + 360) % 360;
+        String[] labels = {"\u5317", "\u4e1c\u5317", "\u4e1c", "\u4e1c\u5357", "\u5357", "\u897f\u5357", "\u897f", "\u897f\u5317"};
+        int index = Math.round(normalized / 45f) % labels.length;
+        return labels[index];
     }
 
     private int directionPriority(int dir) {
@@ -3375,12 +3681,10 @@ public class OverlayService extends Service {
             if (clusterEtaText != null) {
                 clusterEtaText.setText(text.toString());
             }
-            if (!TextUtils.isEmpty(road)) {
-                boolean roadIsEmptyDestination = !TextUtils.isEmpty(destination)
-                        && ("目的地".equals(road) || road.equals(destination));
-                if (!roadIsEmptyDestination) {
-                    currentRoadName = road;
-                }
+            boolean roadIsEmptyDestination = !TextUtils.isEmpty(destination)
+                    && ("\u76ee\u7684\u5730".equals(road) || road.equals(destination));
+            if (!TextUtils.isEmpty(road) && !roadIsEmptyDestination) {
+                currentRoadName = road;
             }
             refreshRoadTitle();
             syncEtaVisibility();
@@ -3404,20 +3708,18 @@ public class OverlayService extends Service {
                 "CAMERA_SPEED", "CAMERA_TYPE", "SAPA_DIST", "SAPA_NAME", "TRAFFIC_LIGHT_NUM",
                 "routeRemainTrafficLightNum");
 
-        int limitedSpeed = intValue(extras, "LIMITED_SPEED", -1);
-        if (limitedSpeed > 0) {
-            parts.add("\u9650\u901f " + limitedSpeed);
-        }
-
         int cameraIndex = intValue(extras, "CAMERA_INDEX", 0);
         int cameraDist = intValue(extras, "CAMERA_DIST", -1);
         int cameraSpeed = intValue(extras, "CAMERA_SPEED", -1);
+        int limitedSpeed = intValue(extras, "LIMITED_SPEED", -1);
+        int displaySpeed = limitedSpeed > 0 ? limitedSpeed : cameraSpeed;
+        if (displaySpeed > 0) {
+            parts.add("\u9650\u901f " + displaySpeed);
+        }
+
         if (cameraIndex != -1 && cameraDist >= 0) {
             StringBuilder camera = new StringBuilder(cameraTypeName(intValue(extras, "CAMERA_TYPE", -1)));
             camera.append(' ').append(formatDistance(cameraDist));
-            if (cameraSpeed > 0) {
-                camera.append(' ').append(cameraSpeed);
-            }
             parts.add(camera.toString());
         }
 
@@ -3447,13 +3749,13 @@ public class OverlayService extends Service {
             }
             return;
         }
-        currentLimitSpeed = limitedSpeed;
+        currentLimitSpeed = displaySpeed;
         alertText.setText(join(parts, "  \u00b7  "));
         if (clusterAlertText != null) {
             clusterAlertText.setText(alertText.getText());
         }
-        populateEdogAlertRow(alertRow, limitedSpeed, cameraIndex, cameraDist, cameraSpeed, lightNum);
-        populateEdogAlertRow(clusterAlertRow, limitedSpeed, cameraIndex, cameraDist, cameraSpeed, lightNum);
+        populateEdogAlertRow(alertRow, displaySpeed, cameraIndex, cameraDist, lightNum);
+        populateEdogAlertRow(clusterAlertRow, displaySpeed, cameraIndex, cameraDist, lightNum);
         refreshAlertCard();
         alertUpdatedAt = System.currentTimeMillis();
         mainHandler.removeCallbacks(alertClear);
@@ -3481,57 +3783,60 @@ public class OverlayService extends Service {
         mainHandler.removeCallbacks(alertClear);
     }
 
-    private void populateEdogAlertRow(LinearLayout row, int limitedSpeed, int cameraIndex, int cameraDist, int cameraSpeed, int lightNum) {
-        if (row == null) return;
-        // Speed limit: show icon with value overlaid
+    private void populateEdogAlertRow(LinearLayout row, int speed, int cameraIndex, int cameraDist, int lightNum) {
+        if (row == null) {
+            return;
+        }
+        boolean anyVisible = false;
         View speedBox = row.findViewWithTag("speed_box");
         if (speedBox instanceof FrameLayout) {
-            FrameLayout sb = (FrameLayout) speedBox;
-            if (limitedSpeed > 0) {
-                sb.setVisibility(View.VISIBLE);
-                if (sb.getChildCount() > 1 && sb.getChildAt(1) instanceof TextView) {
-                    ((TextView) sb.getChildAt(1)).setText(String.valueOf(limitedSpeed));
+            if (speed > 0) {
+                speedBox.setVisibility(View.VISIBLE);
+                FrameLayout frame = (FrameLayout) speedBox;
+                if (frame.getChildCount() > 1 && frame.getChildAt(1) instanceof TextView) {
+                    ((TextView) frame.getChildAt(1)).setText(String.valueOf(speed));
                 }
+                anyVisible = true;
             } else {
-                sb.setVisibility(View.GONE);
+                speedBox.setVisibility(View.GONE);
             }
         }
-        // Camera: icon + distance text
+
         View cameraBox = row.findViewWithTag("camera_box");
         if (cameraBox instanceof LinearLayout) {
-            LinearLayout cb = (LinearLayout) cameraBox;
             boolean hasCamera = cameraIndex != -1 && cameraDist >= 0;
             if (hasCamera) {
-                cb.setVisibility(View.VISIBLE);
-                // Update distance text (child 1 is the TextView)
-                if (cb.getChildCount() > 1 && cb.getChildAt(1) instanceof TextView) {
-                    StringBuilder sb = new StringBuilder(formatDistance(cameraDist));
-                    if (cameraSpeed > 0) {
-                        sb.append(' ').append(cameraSpeed);
-                    }
-                    ((TextView) cb.getChildAt(1)).setText(sb.toString());
+                cameraBox.setVisibility(View.VISIBLE);
+                LinearLayout box = (LinearLayout) cameraBox;
+                if (box.getChildCount() > 1 && box.getChildAt(1) instanceof TextView) {
+                    ((TextView) box.getChildAt(1)).setText(formatDistance(cameraDist));
                 }
+                anyVisible = true;
             } else {
-                cb.setVisibility(View.GONE);
+                cameraBox.setVisibility(View.GONE);
             }
         }
-        // Traffic light: icon + red count
+
         View lightBox = row.findViewWithTag("light_box");
         if (lightBox instanceof LinearLayout) {
-            LinearLayout lb = (LinearLayout) lightBox;
             if (lightNum > 0) {
-                lb.setVisibility(View.VISIBLE);
-                if (lb.getChildCount() > 1 && lb.getChildAt(1) instanceof TextView) {
-                    ((TextView) lb.getChildAt(1)).setText(String.valueOf(lightNum) + "个");
+                lightBox.setVisibility(View.VISIBLE);
+                LinearLayout box = (LinearLayout) lightBox;
+                if (box.getChildCount() > 1 && box.getChildAt(1) instanceof TextView) {
+                    ((TextView) box.getChildAt(1)).setText(lightNum + "\u4e2a");
                 }
+                anyVisible = true;
             } else {
-                lb.setVisibility(View.GONE);
+                lightBox.setVisibility(View.GONE);
             }
         }
+        row.setVisibility(anyVisible ? View.VISIBLE : View.GONE);
     }
 
     private void clearEdogAlertRow(LinearLayout row) {
-        if (row == null) return;
+        if (row == null) {
+            return;
+        }
         row.setVisibility(View.GONE);
         View speedBox = row.findViewWithTag("speed_box");
         if (speedBox != null) speedBox.setVisibility(View.GONE);
@@ -3561,14 +3866,12 @@ public class OverlayService extends Service {
         double lon = doubleValue(extras, "CAR_LONGITUDE",
                 doubleValue(extras, "LON", doubleValue(extras, "LONGITUDE", Double.NaN)));
         boolean showStatusDetails = shouldShowStandbyStatusDetails();
-
         int roadType = intValue(extras, "ROAD_TYPE", -1);
         if (showStatusDetails && roadType >= 0) {
             currentRoadTypeSummary = roadTypeName(roadType);
         } else {
             currentRoadTypeSummary = "";
         }
-
         if (showStatusDetails && (direction >= 0 || (!Double.isNaN(lat) && !Double.isNaN(lon) && !(lat == 0.0d && lon == 0.0d)))) {
             StringBuilder car = new StringBuilder();
             if (direction >= 0) {
@@ -3680,13 +3983,11 @@ public class OverlayService extends Service {
     }
 
     private void showLaneData(int[] lanes, boolean[] advised) {
-        if (laneBar == null) {
+        cacheLaneData(lanes, advised);
+        if (laneBar == null && clusterLaneBar == null) {
             return;
         }
-        laneBar.setLaneData(lanes, advised);
-        if (clusterLaneBar != null) {
-            clusterLaneBar.setLaneData(lanes, advised);
-        }
+        applyCachedLaneData();
         syncLaneVisibility();
         if (MainActivity.isLaneVisible(this)) {
             showAnyPanel();
@@ -3694,6 +3995,8 @@ public class OverlayService extends Service {
     }
 
     private void hideLaneData() {
+        lastLaneData = null;
+        lastLaneAdvised = null;
         if (laneBar != null) {
             laneBar.hideLane();
         }
@@ -3705,6 +4008,28 @@ public class OverlayService extends Service {
         }
         if (clusterLaneSection != null) {
             clusterLaneSection.setVisibility(View.GONE);
+        }
+    }
+
+    private void cacheLaneData(int[] lanes, boolean[] advised) {
+        if (lanes == null || lanes.length == 0) {
+            lastLaneData = null;
+            lastLaneAdvised = null;
+            return;
+        }
+        lastLaneData = Arrays.copyOf(lanes, lanes.length);
+        lastLaneAdvised = advised == null ? null : Arrays.copyOf(advised, advised.length);
+    }
+
+    private void applyCachedLaneData() {
+        if (lastLaneData == null || lastLaneData.length == 0) {
+            return;
+        }
+        if (laneBar != null) {
+            laneBar.setLaneData(lastLaneData, lastLaneAdvised);
+        }
+        if (clusterLaneBar != null) {
+            clusterLaneBar.setLaneData(lastLaneData, lastLaneAdvised);
         }
     }
 
@@ -4009,7 +4334,7 @@ public class OverlayService extends Service {
                 sb.append(' ').append(kmh).append("km/h");
             }
             if (bearing >= 0) {
-                sb.append(' ').append(bearingToCompass(bearing));
+                sb.append(' ').append(bearing).append('\u00b0');
             }
             if (accuracy >= 0) {
                 sb.append(" \u00b1").append(accuracy).append('m');
@@ -4019,13 +4344,6 @@ public class OverlayService extends Service {
             Log.e(TAG, "parse location json failed: " + json, t);
             return null;
         }
-    }
-
-    private static String bearingToCompass(int bearing) {
-        String[] dirs = {"北", "东北", "东", "东南", "南", "西南", "西", "西北"};
-        int index = ((bearing % 360) + 360) % 360;
-        int bucket = (int) Math.round(index / 45.0) % 8;
-        return dirs[bucket];
     }
 
     private String cameraTypeName(int type) {

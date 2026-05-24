@@ -32,6 +32,7 @@ public class LaneBarView extends View {
     private boolean cruiseLaneStyle = true;
     private float iconScaleMultiplier = 1f;
     private float frameScaleMultiplier = 1f;
+    private boolean compactSpacing;
 
     public LaneBarView(Context context) {
         super(context);
@@ -98,6 +99,12 @@ public class LaneBarView extends View {
         invalidate();
     }
 
+    public void setCompactSpacing(boolean compact) {
+        compactSpacing = compact;
+        requestLayout();
+        invalidate();
+    }
+
     public void setFallbackIcon(int icon) {
         setLaneData(new int[]{icon, 15, 15, 15}, new boolean[]{true, true, true, true});
     }
@@ -109,8 +116,8 @@ public class LaneBarView extends View {
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
         int count = Math.max(3, lanes == null ? 4 : lanes.length);
-        int width = dp(48) * count + dp(12);
-        int height = dp(58);
+        int width = dp(compactSpacing ? 40 : 48) * count + dp(compactSpacing ? 8 : 12);
+        int height = dp(compactSpacing ? 50 : 58);
         setMeasuredDimension(resolveSize(width, widthMeasureSpec), resolveSize(height, heightMeasureSpec));
     }
 
@@ -133,14 +140,15 @@ public class LaneBarView extends View {
                 paint.setColor(0x32FFFFFF);
                 paint.setStrokeWidth(dp(1));
                 float x = i * cell;
-                canvas.drawLine(x, dp(8), x, getHeight() - dp(8), paint);
+                canvas.drawLine(x, dp(compactSpacing ? 6 : 8), x, getHeight() - dp(compactSpacing ? 6 : 8), paint);
             }
             boolean laneRecommended = recommend == null || i >= recommend.length || recommend[i];
             LaneIcon icon = iconForLane(lanes[i]);
             if (laneRecommended && icon.hasEnabled()) {
                 paint.setStyle(Paint.Style.FILL);
                 paint.setColor(0x22FFFFFF);
-                rect.set(cell * i + dp(4), dp(5), cell * (i + 1) - dp(4), getHeight() - dp(5));
+                rect.set(cell * i + dp(compactSpacing ? 2 : 4), dp(compactSpacing ? 4 : 5),
+                        cell * (i + 1) - dp(compactSpacing ? 2 : 4), getHeight() - dp(compactSpacing ? 4 : 5));
                 canvas.drawRoundRect(rect, dp(9), dp(9), paint);
             }
             drawLaneIcon(canvas, lanes[i], icon, cell * i, cell, laneRecommended);
@@ -183,9 +191,9 @@ public class LaneBarView extends View {
             return false;
         }
 
-        float iconHeight = Math.min(getHeight() - dp(4), dp(48) * iconScaleMultiplier);
+        float iconHeight = Math.min(getHeight() - dp(4), dp(compactSpacing ? 42 : 48) * iconScaleMultiplier);
         float iconWidth = iconHeight * bitmap.getWidth() / (float) bitmap.getHeight();
-        float maxWidth = width - dp(2);
+        float maxWidth = width - dp(compactSpacing ? 1 : 2);
         if (iconWidth > maxWidth) {
             iconWidth = maxWidth;
             iconHeight = iconWidth * bitmap.getHeight() / (float) bitmap.getWidth();
@@ -218,122 +226,6 @@ public class LaneBarView extends View {
 
     private boolean isComplexLane(int lane) {
         return lane >= 30 && lane <= 48;
-    }
-
-    private String amapBackAssetForLane(int lane) {
-        switch (lane) {
-            case 0:
-            case 15:
-                return "0";
-            case 1:
-            case 16:
-                return "1";
-            case 2:
-            case 17:
-            case 30:
-            case 31:
-                return "2";
-            case 3:
-            case 18:
-                return "3";
-            case 4:
-            case 19:
-            case 32:
-            case 33:
-                return "4";
-            case 5:
-            case 20:
-                return "5";
-            case 6:
-            case 21:
-            case 34:
-            case 35:
-                return "6";
-            case 7:
-            case 22:
-            case 36:
-            case 37:
-            case 38:
-                return "7";
-            case 8:
-            case 23:
-                return "8";
-            case 9:
-            case 24:
-            case 39:
-            case 40:
-                return "9";
-            case 10:
-            case 25:
-            case 41:
-            case 42:
-                return "10";
-            case 11:
-            case 26:
-            case 43:
-            case 44:
-            case 48:
-                return "11";
-            case 12:
-            case 27:
-            case 45:
-            case 46:
-                return "12";
-            case 13:
-            case 28:
-                return "13";
-            case 14:
-            case 29:
-                return "14";
-            case 47:
-                return "e";
-            default:
-                return null;
-        }
-    }
-
-    private String navistateActiveAssetForLane(int lane) {
-        switch (lane) {
-            case 30:
-                return "20";
-            case 31:
-                return "21";
-            case 32:
-                return "40";
-            case 33:
-                return "43";
-            case 34:
-                return "61";
-            case 35:
-                return "63";
-            case 36:
-                return "70";
-            case 37:
-                return "71";
-            case 38:
-                return "73";
-            case 39:
-                return "90";
-            case 40:
-                return "95";
-            case 41:
-                return "100";
-            case 42:
-                return "101";
-            case 43:
-                return "113";
-            case 44:
-            case 48:
-                return "115";
-            case 45:
-                return "121";
-            case 46:
-                return "123";
-            case 47:
-                return "125";
-            default:
-                return null;
-        }
     }
 
     private void drawDirection(Canvas canvas, int direction, float left, float width) {

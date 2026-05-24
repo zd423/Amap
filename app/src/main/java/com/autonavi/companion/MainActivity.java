@@ -65,6 +65,7 @@ import java.util.Locale;
 
 public class MainActivity extends Activity {
     static final String PREFS = "amap_companion";
+    static final String PUBLIC_LOG_DIR = "amap_companion/log";
     static final String KEY_TARGET_PACKAGE = "target_package";
     static final String KEY_UPDATE_URL = "update_url";
     static final String KEY_UPDATE_CHANNEL = "update_channel";
@@ -89,12 +90,14 @@ public class MainActivity extends Activity {
     static final String KEY_TEXT_MODE = "text_mode";
     static final String KEY_OVERLAY_UI_STYLE = "overlay_ui_style";
     static final String KEY_AUTO_START_ENABLED = "auto_start_enabled";
+    static final String KEY_START_SERVICE_ON_APP_OPEN = "start_service_on_app_open";
     static final String KEY_SHOW_MAIN_WHEN_TARGET_FOREGROUND = "show_main_when_target_foreground";
     static final String KEY_HIDE_MAIN_WHEN_TARGET_FOREGROUND = "hide_main_when_target_foreground";
     static final String KEY_HIDE_CLUSTER_WHEN_INACTIVE = "hide_cluster_when_inactive";
     static final String ACTION_MAIN_OVERLAY_CHANGED = "com.autonavi.companion.MAIN_OVERLAY_CHANGED";
     static final String ACTION_OVERLAY_SCALE_CHANGED = "com.autonavi.companion.OVERLAY_SCALE_CHANGED";
     static final String ACTION_CLUSTER_MIRROR_CHANGED = "com.autonavi.companion.CLUSTER_MIRROR_CHANGED";
+    static final String ACTION_CLUSTER_POSITION_CHANGED = "com.autonavi.companion.CLUSTER_POSITION_CHANGED";
     static final String ACTION_OVERLAY_CONTENT_CHANGED = "com.autonavi.companion.OVERLAY_CONTENT_CHANGED";
     static final String ACTION_OVERLAY_STYLE_CHANGED = "com.autonavi.companion.OVERLAY_STYLE_CHANGED";
     static final String ACTION_DISPLAY_POLICY_CHANGED = "com.autonavi.companion.DISPLAY_POLICY_CHANGED";
@@ -115,7 +118,7 @@ public class MainActivity extends Activity {
     static final String TEXT_MODE_AUTO = "auto";
     static final String OVERLAY_UI_OLD = "old";
     static final String OVERLAY_UI_NEW = "new";
-    static final String OVERLAY_UI_DYNAMIC_ISLAND = "card";
+    static final String OVERLAY_UI_DYNAMIC_ISLAND = "dynamic_island";
     static final int MIN_BACKGROUND_OPACITY_PERCENT = 0;
     static final int MAX_BACKGROUND_OPACITY_PERCENT = 90;
     static final int DEFAULT_BACKGROUND_OPACITY_PERCENT = 90;
@@ -149,10 +152,20 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         persistDefaultUpdateUrl();
         migrateOverlayStylePrefs();
-        setContentView(buildContent());
+        View content = buildContent();
+        FontManager.applyToViewTree(this, content);
+        setContentView(content);
+        autoStartServiceOnAppOpen();
         targetText.postDelayed(() -> {
             checkForUpdates(false);
         }, 2000L);
+    }
+
+    private void autoStartServiceOnAppOpen() {
+        if (!isStartServiceOnAppOpenEnabled(this)) {
+            return;
+        }
+        targetText.postDelayed(() -> startCompanionService(false), 350L);
     }
 
     private ScrollView buildContent() {
@@ -601,7 +614,10 @@ public class MainActivity extends Activity {
         if (isWideLayout()) {
             addTogglePair(grid,
                     behaviorToggle("开机自动启动", KEY_AUTO_START_ENABLED),
-                    behaviorToggle("高德广播自动显示悬浮窗", KEY_SHOW_MAIN_WHEN_TARGET_FOREGROUND));
+                    behaviorToggle("进入软件后自动启动服务", KEY_START_SERVICE_ON_APP_OPEN));
+            addTogglePair(grid,
+                    behaviorToggle("高德广播自动显示悬浮窗", KEY_SHOW_MAIN_WHEN_TARGET_FOREGROUND),
+                    null);
             addTogglePair(grid,
                     behaviorToggle("高德前台隐藏中控悬浮窗", KEY_HIDE_MAIN_WHEN_TARGET_FOREGROUND),
                     null);
@@ -610,6 +626,7 @@ public class MainActivity extends Activity {
                     null);
         } else {
             grid.addView(behaviorToggle("开机自动启动", KEY_AUTO_START_ENABLED));
+            grid.addView(behaviorToggle("进入软件后自动启动服务", KEY_START_SERVICE_ON_APP_OPEN));
             grid.addView(behaviorToggle("高德广播自动显示悬浮窗", KEY_SHOW_MAIN_WHEN_TARGET_FOREGROUND));
             grid.addView(behaviorToggle("高德前台隐藏中控悬浮窗", KEY_HIDE_MAIN_WHEN_TARGET_FOREGROUND));
             grid.addView(behaviorToggle("导航/巡航退出隐藏仪表", KEY_HIDE_CLUSTER_WHEN_INACTIVE));
@@ -780,19 +797,14 @@ public class MainActivity extends Activity {
         previewLightRow = new LinearLayout(this);
         previewLightRow.setOrientation(LinearLayout.HORIZONTAL);
         previewLightRow.setGravity(Gravity.CENTER);
-        previewLightRow.addView(previewLight("\u2190 51", 0xFFC62828));
-        previewLightRow.addView(previewLight("\u2191 18", 0xFFC62828));
+        previewLightRow.addView(previewLight("\u2190 51s", 0xFFC62828));
+        previewLightRow.addView(previewLight("\u2191 18s", 0xFFC62828));
         panel.addView(previewLightRow, new LinearLayout.LayoutParams(-2, -2));
 
         previewLaneSection = new LinearLayout(this);
         previewLaneSection.setOrientation(LinearLayout.VERTICAL);
         previewLaneSection.setGravity(Gravity.CENTER_HORIZONTAL);
         previewLaneSection.setPadding(dp(4), dp(3), dp(4), dp(4));
-        GradientDrawable laneBg = new GradientDrawable();
-        laneBg.setColor(0xCC0F172A);
-        laneBg.setCornerRadius(dp(5));
-        laneBg.setStroke(dp(1), 0x1FFFFFFF);
-        previewLaneSection.setBackground(laneBg);
 
         LaneBarView laneBar = new LaneBarView(this);
         laneBar.setFrameScaleMultiplier(1f);
@@ -804,7 +816,7 @@ public class MainActivity extends Activity {
         panel.addView(previewLaneSection, laneLp);
 
         previewEtaText = new TextView(this);
-        previewEtaText.setText("5.3\u516c\u91cc \u00b7 10\u5206\u949f \u00b7 05:42\n\u5c0f\u7ea2\u95e8\u4e61\u515a\u7fa4\u670d\u52a1\u4e2d\u5fc3");
+        previewEtaText.setText("5.3\u516c\u91cc \u00b7 10\u5206\u949f\n\u9884\u8ba105:42\u5230\u8fbe\n\u76ee\u7684\u5730 \u5c0f\u7ea2\u95e8\u4e61\u515a\u7fa4\u670d\u52a1\u4e2d\u5fc3");
         previewEtaText.setTextSize(7.5f);
         previewEtaText.setTextColor(0xFFE8EAED);
         previewEtaText.setGravity(Gravity.CENTER);
@@ -820,7 +832,7 @@ public class MainActivity extends Activity {
         panel.addView(previewAlertText, alertLp);
 
         previewDetailText = new TextView(this);
-        previewDetailText.setText("\u8f66\u5934 \u4e1c \u00b7 \u4e3b\u8981\u9053\u8def");
+        previewDetailText.setText("\u8f66\u5934 90\u00b0\n\u9053\u8def \u4e3b\u8981\u9053\u8def");
         previewDetailText.setTextSize(5.8f);
         previewDetailText.setTextColor(0xFFC7D2FE);
         previewDetailText.setGravity(Gravity.CENTER);
@@ -830,21 +842,45 @@ public class MainActivity extends Activity {
         return panel;
     }
 
-    private TextView previewLight(String text, int color) {
-        TextView view = new TextView(this);
-        view.setText(text);
-        view.setTextSize(10f);
-        view.setTypeface(Typeface.DEFAULT_BOLD);
-        view.setTextColor(Color.WHITE);
+    private View previewLight(String text, int color) {
+        LinearLayout view = new LinearLayout(this);
+        view.setOrientation(LinearLayout.HORIZONTAL);
         view.setGravity(Gravity.CENTER);
-        view.setMinWidth(dp(31));
-        view.setMinHeight(dp(18));
-        view.setPadding(dp(5), 0, dp(5), 0);
+        view.setMinimumWidth(dp(56));
+        view.setMinimumHeight(dp(27));
+        view.setPadding(dp(4), dp(3), dp(7), dp(3));
         GradientDrawable bg = new GradientDrawable();
-        bg.setColor(color);
-        bg.setCornerRadius(dp(9));
+        bg.setOrientation(GradientDrawable.Orientation.LEFT_RIGHT);
+        bg.setColors(new int[]{withAlpha(color, 34), withAlpha(color, 0)});
+        bg.setCornerRadius(dp(12));
+        bg.setStroke(dp(1), withAlpha(color, 78));
         view.setBackground(bg);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, dp(18));
+
+        TextView arrow = new TextView(this);
+        arrow.setText(text.length() > 0 ? text.substring(0, 1) : "\u2191");
+        arrow.setTextSize(13f);
+        arrow.setTypeface(Typeface.DEFAULT_BOLD);
+        arrow.setTextColor(Color.WHITE);
+        arrow.setGravity(Gravity.CENTER);
+        GradientDrawable arrowBg = new GradientDrawable();
+        arrowBg.setShape(GradientDrawable.OVAL);
+        arrowBg.setColor(color);
+        arrowBg.setStroke(dp(2), 0xBBFFFFFF);
+        arrow.setBackground(arrowBg);
+        LinearLayout.LayoutParams arrowLp = new LinearLayout.LayoutParams(dp(19), dp(19));
+        arrowLp.setMargins(0, 0, dp(5), 0);
+        view.addView(arrow, arrowLp);
+
+        TextView label = new TextView(this);
+        int space = text.indexOf(' ');
+        label.setText(space >= 0 ? text.substring(space + 1) : text);
+        label.setTextSize(11.5f);
+        label.setTypeface(Typeface.DEFAULT_BOLD);
+        label.setTextColor(Color.WHITE);
+        label.setGravity(Gravity.CENTER);
+        view.addView(label, new LinearLayout.LayoutParams(-2, -2));
+
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, dp(24));
         lp.setMargins(dp(2), dp(2), dp(2), dp(2));
         view.setLayoutParams(lp);
         return view;
@@ -1093,16 +1129,24 @@ public class MainActivity extends Activity {
     }
 
     private void startCompanionService() {
+        startCompanionService(true);
+    }
+
+    private void startCompanionService(boolean showToast) {
         if (!isMainOverlayEnabled(this)
                 && !isClusterMirrorEnabled(this)
                 && !isShowMainWhenTargetForegroundEnabled(this)) {
-            Toast.makeText(this, "\u8bf7\u5148\u52fe\u9009\u4e3b\u5c4f\u60ac\u6d6e\u7a97\u3001\u526f\u5c4f\u60ac\u6d6e\u7a97\u6216\u9ad8\u5fb7\u5e7f\u64ad\u81ea\u52a8\u663e\u793a", Toast.LENGTH_LONG).show();
+            if (showToast) {
+                Toast.makeText(this, "\u8bf7\u5148\u52fe\u9009\u4e3b\u5c4f\u60ac\u6d6e\u7a97\u3001\u526f\u5c4f\u60ac\u6d6e\u7a97\u6216\u9ad8\u5fb7\u5e7f\u64ad\u81ea\u52a8\u663e\u793a", Toast.LENGTH_LONG).show();
+            }
             return;
         }
         startOverlayService();
         notifyMainOverlayChanged();
         notifyClusterMirrorChanged();
-        Toast.makeText(this, "\u5df2\u6309\u9009\u9879\u542f\u52a8\u4f34\u4fa3\u670d\u52a1", Toast.LENGTH_SHORT).show();
+        if (showToast) {
+            Toast.makeText(this, "\u5df2\u6309\u9009\u9879\u542f\u52a8\u4f34\u4fa3\u670d\u52a1", Toast.LENGTH_SHORT).show();
+        }
     }
 
     private void stopCompanionService() {
@@ -1173,7 +1217,7 @@ public class MainActivity extends Activity {
         content.setPadding(dp(8), 0, dp(8), 0);
 
         TextView hint = new TextView(this);
-        hint.setText("\u53cd\u9988 bug \u65f6\u53ef\u63d0\u4ea4\u65e5\u5fd7\u3002\u4f18\u5148\u4fdd\u5b58\u5230 /sdcard/amap_log\uff1b\u82e5\u7cfb\u7edf\u4e0d\u6388\u6743\uff0c\u4f1a\u81ea\u52a8\u56de\u9000\u5230\u5e94\u7528\u79c1\u6709\u65e5\u5fd7\u76ee\u5f55\u3002");
+        hint.setText("\u53cd\u9988 bug \u65f6\u53ef\u63d0\u4ea4\u65e5\u5fd7\u3002\u4f18\u5148\u4fdd\u5b58\u5230 /sdcard/" + PUBLIC_LOG_DIR + "\uff1b\u82e5\u7cfb\u7edf\u4e0d\u6388\u6743\uff0c\u4f1a\u81ea\u52a8\u56de\u9000\u5230\u5e94\u7528\u79c1\u6709\u65e5\u5fd7\u76ee\u5f55\u3002");
         hint.setTextSize(13);
         hint.setTextColor(0xFF4B5563);
         hint.setPadding(dp(16), dp(6), dp(16), dp(10));
@@ -1222,6 +1266,7 @@ public class MainActivity extends Activity {
         operationRow.addView(save, new LinearLayout.LayoutParams(0, dp(42), 1f));
         operationRow.addView(copy, new LinearLayout.LayoutParams(0, dp(42), 1f));
 
+        FontManager.applyToViewTree(this, content);
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("\u65e5\u5fd7\u4e0e\u8c03\u8bd5")
                 .setView(content)
@@ -1295,7 +1340,7 @@ public class MainActivity extends Activity {
                     Toast.makeText(this, "\u65e0\u6cd5\u6253\u5f00\u6240\u6709\u6587\u4ef6\u8bbf\u95ee\u6743\u9650\u8bbe\u7f6e", Toast.LENGTH_SHORT).show();
                 }
             }
-            Toast.makeText(this, "\u8bf7\u5f00\u542f\u201c\u6240\u6709\u6587\u4ef6\u8bbf\u95ee\u6743\u9650\u201d\uff0c\u7528\u4e8e\u4fdd\u5b58\u5230 /sdcard/amap_log", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "\u8bf7\u5f00\u542f\u201c\u6240\u6709\u6587\u4ef6\u8bbf\u95ee\u6743\u9650\u201d\uff0c\u7528\u4e8e\u4fdd\u5b58\u5230 /sdcard/" + PUBLIC_LOG_DIR, Toast.LENGTH_LONG).show();
         } else if (openSettings) {
             Toast.makeText(this, storagePermissionSummary(), Toast.LENGTH_LONG).show();
         }
@@ -1322,7 +1367,7 @@ public class MainActivity extends Activity {
         sb.append("android=").append(Build.VERSION.RELEASE).append(" sdk=").append(Build.VERSION.SDK_INT).append('\n');
         sb.append("readLogsPermission=").append(hasPermission(Manifest.permission.READ_LOGS)).append('\n');
         sb.append("publicLogDirWritable=").append(canWritePublicLogDir()).append('\n');
-        sb.append("preferredLogDir=/sdcard/amap_log\n");
+        sb.append("preferredLogDir=/sdcard/").append(PUBLIC_LOG_DIR).append('\n');
         sb.append("note=Android may restrict third-party apps to their own logs only.\n\n");
         int lines = appendLogcatCommand(sb, "filtered", new String[]{
                 "logcat", "-d", "-v", "time", "-t", "1000",
@@ -1412,7 +1457,7 @@ public class MainActivity extends Activity {
     }
 
     private File resolveWritableLogDir() throws Exception {
-        File primary = new File(Environment.getExternalStorageDirectory(), "amap_log");
+        File primary = new File(Environment.getExternalStorageDirectory(), PUBLIC_LOG_DIR);
         if (ensureWritableDir(primary)) {
             return primary;
         }
@@ -1421,7 +1466,7 @@ public class MainActivity extends Activity {
             fallback = new File(getCacheDir(), "logs");
         }
         if (ensureWritableDir(fallback)) {
-            Toast.makeText(this, "\u65e0\u6cd5\u5199\u5165 /sdcard/amap_log\uff0c\u5df2\u56de\u9000\u5230\uff1a" + fallback.getAbsolutePath(), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "\u65e0\u6cd5\u5199\u5165 /sdcard/" + PUBLIC_LOG_DIR + "\uff0c\u5df2\u56de\u9000\u5230\uff1a" + fallback.getAbsolutePath(), Toast.LENGTH_LONG).show();
             return fallback;
         }
         throw new IllegalStateException("no writable log dir");
@@ -1449,7 +1494,7 @@ public class MainActivity extends Activity {
     }
 
     private boolean canWritePublicLogDir() {
-        return ensureWritableDir(new File(Environment.getExternalStorageDirectory(), "amap_log"));
+        return ensureWritableDir(new File(Environment.getExternalStorageDirectory(), PUBLIC_LOG_DIR));
     }
 
     private boolean hasPermission(String permission) {
@@ -1465,9 +1510,9 @@ public class MainActivity extends Activity {
 
     private String storagePermissionSummary() {
         if (canWritePublicLogDir()) {
-            return "/sdcard/amap_log 可写，保存日志会优先使用该目录";
+            return "/sdcard/" + PUBLIC_LOG_DIR + " 可写，保存日志会优先使用该目录";
         }
-        return "/sdcard/amap_log 不可写，保存日志会自动回退到应用私有目录";
+        return "/sdcard/" + PUBLIC_LOG_DIR + " 不可写，保存日志会自动回退到应用私有目录";
     }
 
     private void copyLogText(String text) {
@@ -1786,7 +1831,11 @@ public class MainActivity extends Activity {
                 openUsageAccessSettings();
             }
             if (isChecked) {
-                startOverlayService();
+                if (KEY_START_SERVICE_ON_APP_OPEN.equals(key)) {
+                    startCompanionService(false);
+                } else {
+                    startOverlayService();
+                }
             }
             notifyDisplayPolicyChanged();
             if (!isChecked) {
@@ -1974,7 +2023,7 @@ public class MainActivity extends Activity {
                 .edit()
                 .putString(KEY_OVERLAY_UI_STYLE,
                         OVERLAY_UI_DYNAMIC_ISLAND.equals(style) ? OVERLAY_UI_DYNAMIC_ISLAND
-                        : OVERLAY_UI_NEW.equals(style) ? OVERLAY_UI_NEW : OVERLAY_UI_OLD)
+                                : OVERLAY_UI_NEW.equals(style) ? OVERLAY_UI_NEW : OVERLAY_UI_OLD)
                 .apply();
     }
 
@@ -2049,6 +2098,12 @@ public class MainActivity extends Activity {
 
     private void notifyClusterMirrorChanged() {
         Intent intent = new Intent(ACTION_CLUSTER_MIRROR_CHANGED);
+        intent.setPackage(getPackageName());
+        sendBroadcast(intent);
+    }
+
+    private void notifyClusterPositionChanged() {
+        Intent intent = new Intent(ACTION_CLUSTER_POSITION_CHANGED);
         intent.setPackage(getPackageName());
         sendBroadcast(intent);
     }
@@ -2148,12 +2203,16 @@ public class MainActivity extends Activity {
         SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         int x = Math.max(0, prefs.getInt(KEY_CLUSTER_X, dp(24)) + dx);
         int y = Math.max(0, prefs.getInt(KEY_CLUSTER_Y, dp(120)) + dy);
-        prefs.edit()
+        boolean saved = prefs.edit()
                 .putInt(KEY_CLUSTER_X, x)
                 .putInt(KEY_CLUSTER_Y, y)
-                .apply();
+                .commit();
         startOverlayService();
-        notifyClusterMirrorChanged();
+        if (saved) {
+            notifyClusterPositionChanged();
+        } else {
+            notifyClusterMirrorChanged();
+        }
     }
 
     static int getOverlayScalePercent(android.content.Context context) {
@@ -2177,6 +2236,10 @@ public class MainActivity extends Activity {
 
     static boolean isAutoStartEnabled(android.content.Context context) {
         return isBehaviorEnabled(context, KEY_AUTO_START_ENABLED);
+    }
+
+    static boolean isStartServiceOnAppOpenEnabled(android.content.Context context) {
+        return isBehaviorEnabled(context, KEY_START_SERVICE_ON_APP_OPEN);
     }
 
     static boolean isHideMainWhenTargetForegroundEnabled(android.content.Context context) {
@@ -2301,8 +2364,12 @@ public class MainActivity extends Activity {
     static String getOverlayUiStyle(android.content.Context context) {
         String style = context.getSharedPreferences(PREFS, MODE_PRIVATE)
                 .getString(KEY_OVERLAY_UI_STYLE, OVERLAY_UI_OLD);
-        if (OVERLAY_UI_DYNAMIC_ISLAND.equals(style)) return OVERLAY_UI_DYNAMIC_ISLAND;
-        if (OVERLAY_UI_NEW.equals(style)) return OVERLAY_UI_NEW;
+        if (OVERLAY_UI_DYNAMIC_ISLAND.equals(style)) {
+            return OVERLAY_UI_DYNAMIC_ISLAND;
+        }
+        if (OVERLAY_UI_NEW.equals(style)) {
+            return OVERLAY_UI_NEW;
+        }
         return OVERLAY_UI_OLD;
     }
 
@@ -2417,6 +2484,7 @@ public class MainActivity extends Activity {
             tags.addView(appTag(choice.launchable ? "\u53ef\u6253\u5f00" : "\u65e0\u684c\u9762\u56fe\u6807",
                     choice.launchable ? 0xFFF0FDFA : 0xFFFEF2F2,
                     choice.launchable ? 0xFF0F766E : 0xFFB91C1C));
+            FontManager.applyToViewTree(MainActivity.this, root);
             return root;
         }
 
