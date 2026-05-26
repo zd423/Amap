@@ -165,6 +165,7 @@ public class OverlayService extends Service {
     private int currentLimitSpeed = -1;
     private long alertUpdatedAt;
     private int navigationTurnDir = -1;
+    private int lastNavigationTrafficLightDir = -1;
     private Runnable mainPanelWidthUnlock;
     private Runnable clusterPanelWidthUnlock;
     private int mainPanelBaseMinWidth = -1;
@@ -2505,6 +2506,7 @@ public class OverlayService extends Service {
                 clusterLightRow.setVisibility(View.GONE);
             }
             trafficLights.clear();
+            lastNavigationTrafficLightDir = -1;
             hideLaneData();
             clearTurnState();
             if (alertText != null) {
@@ -2614,6 +2616,7 @@ public class OverlayService extends Service {
         if (booleanValue(extras, "clearLights", false)
                 || booleanValue(extras, "EXTRA_CLEAR_LIGHTS", false)) {
             trafficLights.clear();
+            lastNavigationTrafficLightDir = -1;
             renderTrafficLights();
             Log.d(TAG, "clear traffic lights by wrapper broadcast");
             return;
@@ -2623,6 +2626,7 @@ public class OverlayService extends Service {
                 && intValue(extras, "routeRemainTrafficLightNum", -1) == 0
                 && !hasCountdownPayload(extras)) {
             trafficLights.clear();
+            lastNavigationTrafficLightDir = -1;
             renderTrafficLights();
             return;
         }
@@ -2634,6 +2638,7 @@ public class OverlayService extends Service {
                 return;
             } else if (!hasSingleLightPayload(extras)) {
                 trafficLights.clear();
+                lastNavigationTrafficLightDir = -1;
                 renderTrafficLights();
                 Log.d(TAG, "lightsData present but empty, cleared stale cruise lights");
                 return;
@@ -3157,27 +3162,38 @@ public class OverlayService extends Service {
     private void putLightState(HashMap<Integer, LightState> target, int key, int dir,
                                int status, int red, int green, int seconds) {
         LightState state = new LightState();
-        state.dir = normalizeLightDirectionForDisplay(dir, status);
+        state.dir = normalizeLightDirectionForDisplay(dir, status, red, green);
         state.status = status;
         state.seconds = seconds;
         state.color = colorForStatus(status, red, green);
         state.updatedAt = System.currentTimeMillis();
         state.ttlMs = inCruiseMode ? seconds * 1000L + 2000L : LIGHT_TTL_MS;
+        rememberNavigationTrafficLightDir(state.dir, status, red, green);
         LightState old = target.get(key);
         if (old == null || preferLightState(state, old)) {
             target.put(key, state);
         }
     }
 
-    private int normalizeLightDirectionForDisplay(int dir, int status) {
+    private int normalizeLightDirectionForDisplay(int dir, int status, int red, int green) {
         if (!inCruiseMode && dir == 3 && effectiveNavigationTurnDir() == 0) {
             return 0;
         }
-        if (!inCruiseMode && dir == 0 && isYellowLightStatus(status)) {
-            int turnDir = effectiveNavigationTurnDir();
-            return turnDir >= 0 ? turnDir : 4;
+        if (!inCruiseMode && dir == 0) {
+            if (isYellowLightStatus(status) || isYellowTailCountdown(red, green)) {
+                return lastNavigationTrafficLightDir >= 0 ? lastNavigationTrafficLightDir : 4;
+            }
+            return 4;
         }
         return dir;
+    }
+
+    private void rememberNavigationTrafficLightDir(int dir, int status, int red, int green) {
+        if (inCruiseMode || dir < 0
+                || isYellowLightStatus(status) || isYellowTailCountdown(red, green)) {
+            return;
+        }
+        lastNavigationTrafficLightDir = dir;
     }
 
     private int effectiveNavigationTurnDir() {
@@ -3202,6 +3218,9 @@ public class OverlayService extends Service {
 
     private void replaceTrafficLights(HashMap<Integer, LightState> nextLights) {
         trafficLights.clear();
+        if (nextLights.isEmpty()) {
+            lastNavigationTrafficLightDir = -1;
+        }
         trafficLights.putAll(nextLights);
     }
 
