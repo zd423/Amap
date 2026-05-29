@@ -158,7 +158,6 @@ public class MainActivity extends Activity {
         setContentView(content);
         autoStartServiceOnAppOpen();
         targetText.postDelayed(() -> {
-            checkForUpdates(false);
         }, 2000L);
     }
 
@@ -190,23 +189,7 @@ public class MainActivity extends Activity {
         title.setTextColor(Color.WHITE);
         hero.addView(title, new LinearLayout.LayoutParams(-1, -2));
 
-        targetText = new TextView(this);
-        targetText.setTextSize(14f);
-        targetText.setTextColor(0xFFD1D5DB);
-        targetText.setLineSpacing(dp(2), 1.0f);
-        LinearLayout.LayoutParams targetLp = new LinearLayout.LayoutParams(-1, -2);
-        targetLp.setMargins(0, dp(8), 0, 0);
-        hero.addView(targetText, targetLp);
-        updateTargetText();
 
-        updateText = new TextView(this);
-        updateText.setTextSize(13f);
-        updateText.setTextColor(0xFFA7F3D0);
-        updateText.setLineSpacing(dp(2), 1.0f);
-        LinearLayout.LayoutParams updateLp = new LinearLayout.LayoutParams(-1, -2);
-        updateLp.setMargins(0, dp(8), 0, 0);
-        hero.addView(updateText, updateLp);
-        updateUpdateText("\u66f4\u65b0\u6e20\u9053\n" + displayUpdateUrl());
 
         LinearLayout contentArea = new LinearLayout(this);
         contentArea.setOrientation(wideLayout ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
@@ -970,7 +953,6 @@ public class MainActivity extends Activity {
                 .create();
         listView.setOnItemClickListener((parent, view, which, id) -> {
             saveTargetPackage(choices.get(which).packageName);
-            updateTargetText();
             startOverlayService();
             dialog.dismiss();
         });
