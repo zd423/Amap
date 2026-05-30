@@ -102,11 +102,11 @@ public class MainActivity extends Activity {
     static final String ACTION_OVERLAY_STYLE_CHANGED = "com.autonavi.companion.OVERLAY_STYLE_CHANGED";
     static final String ACTION_DISPLAY_POLICY_CHANGED = "com.autonavi.companion.DISPLAY_POLICY_CHANGED";
     static final String DEFAULT_TARGET_PACKAGE = "com.autonavi.amapauto";
-    static final String UPDATE_CHANNEL_SERVER = "";
-    static final String UPDATE_CHANNEL_GITHUB = "";
-    static final String DEFAULT_UPDATE_CHANNEL = UPDATE_CHANNEL_SERVER;
-    static final String SERVER_UPDATE_URL = "";
-    static final String GITHUB_UPDATE_URL = "";
+
+
+  
+
+
     static final String HOMEPAGE_URL = "";
     static final String REPOSITORY_URL = "";
     static final String LICENSE_URL = "";
@@ -114,7 +114,6 @@ public class MainActivity extends Activity {
     static final String CUSTOM_MAP_APK_URL = "";
     static final String CUSTOM_MAP_SKILL_MIRROR_URL = "";
     static final String CUSTOM_MAP_APK_MIRROR_URL = "";
-    static final String DEFAULT_UPDATE_URL = SERVER_UPDATE_URL;
     static final String TEXT_MODE_LIGHT = "light";
     static final String TEXT_MODE_AUTO = "auto";
     static final String OVERLAY_UI_OLD = "old";
@@ -131,7 +130,6 @@ public class MainActivity extends Activity {
     private static final int REQUEST_STORAGE_PERMISSIONS = 7002;
 
     private TextView targetText;
-    private TextView updateText;
     private TextView overlayScaleText;
     private TextView clusterScaleText;
     private TextView clusterDisplayText;
@@ -151,7 +149,6 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        persistDefaultUpdateUrl();
         migrateOverlayStylePrefs();
         View content = buildContent();
         FontManager.applyToViewTree(this, content);
