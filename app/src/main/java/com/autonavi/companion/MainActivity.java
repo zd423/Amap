@@ -184,15 +184,15 @@ public class MainActivity extends Activity {
         root.addView(hero, new LinearLayout.LayoutParams(-1, -2));
 
         TextView title = new TextView(this);
-        title.setText("AMap Companion");
+        title.setText("AMap");
         title.setTextSize(28f);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         title.setTextColor(Color.WHITE);
         hero.addView(title, new LinearLayout.LayoutParams(-1, -2));
 
         targetText = new TextView(this);
-        targetText.setTextSize(14f);
-        targetText.setTextColor(0xFFD1D5DB);
+        targetText.setTextSize(16f);
+        targetText.setTextColor(0xFFFF0000);
         targetText.setLineSpacing(dp(2), 1.0f);
         LinearLayout.LayoutParams targetLp = new LinearLayout.LayoutParams(-1, -2);
         targetLp.setMargins(0, dp(8), 0, 0);
