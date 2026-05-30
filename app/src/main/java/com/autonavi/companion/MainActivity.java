@@ -101,19 +101,19 @@ public class MainActivity extends Activity {
     static final String ACTION_OVERLAY_CONTENT_CHANGED = "com.autonavi.companion.OVERLAY_CONTENT_CHANGED";
     static final String ACTION_OVERLAY_STYLE_CHANGED = "com.autonavi.companion.OVERLAY_STYLE_CHANGED";
     static final String ACTION_DISPLAY_POLICY_CHANGED = "com.autonavi.companion.DISPLAY_POLICY_CHANGED";
-    static final String DEFAULT_TARGET_PACKAGE = "com.autonavi.amapauto";
-    static final String UPDATE_CHANNEL_SERVER = "";
-    static final String UPDATE_CHANNEL_GITHUB = "";
+    static final String DEFAULT_TARGET_PACKAGE = "com.autonavi.amapClone";
+    static final String UPDATE_CHANNEL_SERVER = "server";
+    static final String UPDATE_CHANNEL_GITHUB = "github";
     static final String DEFAULT_UPDATE_CHANNEL = UPDATE_CHANNEL_SERVER;
-    static final String SERVER_UPDATE_URL = "";
-    static final String GITHUB_UPDATE_URL = "";
-    static final String HOMEPAGE_URL = "";
-    static final String REPOSITORY_URL = "";
-    static final String LICENSE_URL = "";
-    static final String CUSTOM_MAP_SKILL_URL = "";
-    static final String CUSTOM_MAP_APK_URL = "";
-    static final String CUSTOM_MAP_SKILL_MIRROR_URL = "";
-    static final String CUSTOM_MAP_APK_MIRROR_URL = "";
+    static final String SERVER_UPDATE_URL = "https://amap-companion.zuoqirun.top/update.json";
+    static final String GITHUB_UPDATE_URL = "https://amap-companion.zuoqirun.top/update-github.json";
+    static final String HOMEPAGE_URL = "https://amap-companion.zuoqirun.top";
+    static final String REPOSITORY_URL = "https://github.com/zuo-qirun/amap-companion";
+    static final String LICENSE_URL = "https://github.com/zuo-qirun/amap-companion/blob/master/LICENSE";
+    static final String CUSTOM_MAP_SKILL_URL = "https://github.com/zuo-qirun/amap-cruise-wrapper-skill";
+    static final String CUSTOM_MAP_APK_URL = "https://github.com/zuo-qirun/amap-cruise-wrapper-skill/releases/download/v20260523-cruise-wrapper/amap-auto-cruise-wrapper-20260523.apk";
+    static final String CUSTOM_MAP_SKILL_MIRROR_URL = "https://gh-proxy.com/https://github.com/zuo-qirun/amap-cruise-wrapper-skill/archive/refs/heads/master.zip";
+    static final String CUSTOM_MAP_APK_MIRROR_URL = "https://gh.llkk.cc/https://github.com/zuo-qirun/amap-cruise-wrapper-skill/releases/download/v20260523-cruise-wrapper/amap-auto-cruise-wrapper-20260523.apk";
     static final String DEFAULT_UPDATE_URL = SERVER_UPDATE_URL;
     static final String TEXT_MODE_LIGHT = "light";
     static final String TEXT_MODE_AUTO = "auto";
@@ -122,10 +122,10 @@ public class MainActivity extends Activity {
     static final String OVERLAY_UI_DYNAMIC_ISLAND = "dynamic_island";
     static final int MIN_BACKGROUND_OPACITY_PERCENT = 0;
     static final int MAX_BACKGROUND_OPACITY_PERCENT = 90;
-    static final int DEFAULT_BACKGROUND_OPACITY_PERCENT = 0;
-    static final int MIN_OVERLAY_SCALE_PERCENT = 150;
-    static final int MAX_OVERLAY_SCALE_PERCENT = 180;
-    static final int DEFAULT_OVERLAY_SCALE_PERCENT = 165;
+    static final int DEFAULT_BACKGROUND_OPACITY_PERCENT = 90;
+    static final int MIN_OVERLAY_SCALE_PERCENT = 30;
+    static final int MAX_OVERLAY_SCALE_PERCENT = 300;
+    static final int DEFAULT_OVERLAY_SCALE_PERCENT = 200;
     private static final String TARGET_PACKAGE_PREFIX = "com.autonavi.";
     private static final int REQUEST_READ_LOGS_PERMISSION = 7001;
     private static final int REQUEST_STORAGE_PERMISSIONS = 7002;
@@ -158,6 +158,7 @@ public class MainActivity extends Activity {
         setContentView(content);
         autoStartServiceOnAppOpen();
         targetText.postDelayed(() -> {
+            checkForUpdates(false);
         }, 2000L);
     }
 
@@ -189,7 +190,25 @@ public class MainActivity extends Activity {
         title.setTextColor(Color.WHITE);
         hero.addView(title, new LinearLayout.LayoutParams(-1, -2));
 
+        targetText = new TextView(this);
+        targetText.setTextSize(14f);
+        targetText.setTextColor(0xFFD1D5DB);
+        targetText.setLineSpacing(dp(2), 1.0f);
+        LinearLayout.LayoutParams targetLp = new LinearLayout.LayoutParams(-1, -2);
+        targetLp.setMargins(0, dp(8), 0, 0);
+        hero.addView(targetText, targetLp);
+        updateTargetText();
 
+        updateText = new TextView(this);
+        updateText.setTextSize(13f);
+        updateText.setTextColor(0xFFA7F3D0);
+        updateText.setLineSpacing(dp(2), 1.0f);
+        LinearLayout.LayoutParams updateLp = new LinearLayout.LayoutParams(-1, -2);
+        updateLp.setMargins(0, dp(8), 0, 0);
+        hero.addView(updateText, updateLp);
+        updateUpdateText("\u66f4\u65b0\u6e20\u9053\n" + displayUpdateUrl());
+
+        addAnnouncementSection(root);
 
         LinearLayout contentArea = new LinearLayout(this);
         contentArea.setOrientation(wideLayout ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
@@ -228,6 +247,7 @@ public class MainActivity extends Activity {
         addOverlayTargetControls(settings);
         addOverlayContentControls(settings);
         addBehaviorControls(settings);
+        addOpenSourceSection(wideLayout ? leftColumn : rightColumn, wideLayout);
 
         return scroll;
     }
@@ -242,7 +262,13 @@ public class MainActivity extends Activity {
                     button("\u5173\u95ed\u4f34\u4fa3\u670d\u52a1", v -> stopCompanionService(), 0xFFB45309));
             addButtonPair(parent,
                     button("\u6253\u5f00\u76ee\u6807\u5e94\u7528", v -> openTargetApp(), 0xFF111827),
-                    button("\u67e5\u770b/\u4fdd\u5b58\u65e5\u5fd7", v -> showLogcatDialog(), 0xFF4F46E5));
+                    null);
+            addButtonPair(parent,
+                    button("\u9009\u62e9\u4e0b\u8f7d\u6e20\u9053", v -> chooseUpdateChannel(), 0xFF334155),
+                    button("\u68c0\u67e5\u66f4\u65b0", v -> checkForUpdates(true), 0xFF059669));
+            addButtonPair(parent,
+                    button("\u67e5\u770b/\u4fdd\u5b58\u65e5\u5fd7", v -> showLogcatDialog(), 0xFF4F46E5),
+                    null);
             return;
         }
         parent.addView(button("\u9009\u62e9\u76ee\u6807\u5e94\u7528", v -> chooseTargetApp(), 0xFF2563EB));
@@ -250,7 +276,100 @@ public class MainActivity extends Activity {
         parent.addView(button("\u542f\u52a8\u4f34\u4fa3\u670d\u52a1", v -> startCompanionService(), 0xFF0F766E));
         parent.addView(button("\u5173\u95ed\u4f34\u4fa3\u670d\u52a1", v -> stopCompanionService(), 0xFFB45309));
         parent.addView(button("\u6253\u5f00\u76ee\u6807\u5e94\u7528", v -> openTargetApp(), 0xFF111827));
+        parent.addView(button("\u9009\u62e9\u4e0b\u8f7d\u6e20\u9053", v -> chooseUpdateChannel(), 0xFF334155));
+        parent.addView(button("\u68c0\u67e5\u66f4\u65b0", v -> checkForUpdates(true), 0xFF059669));
         parent.addView(button("\u67e5\u770b/\u4fdd\u5b58\u65e5\u5fd7", v -> showLogcatDialog(), 0xFF4F46E5));
+    }
+
+    private void addAnnouncementSection(LinearLayout root) {
+        LinearLayout section = card(Color.WHITE);
+        LinearLayout.LayoutParams sectionLp = new LinearLayout.LayoutParams(-1, -2);
+        sectionLp.setMargins(0, dp(14), 0, 0);
+        root.addView(section, sectionLp);
+
+        TextView title = new TextView(this);
+        title.setText("\u516c\u544a");
+        title.setTextSize(16f);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setTextColor(0xFF111827);
+        section.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView body = new TextView(this);
+        body.setText("\u53cd\u9988/\u4ea4\u6d41\u7fa4 QQ\u7fa4\uff1a1106923186");
+        body.setTextSize(14f);
+        body.setTextColor(0xFF334155);
+        body.setTextIsSelectable(true);
+        LinearLayout.LayoutParams bodyLp = new LinearLayout.LayoutParams(-1, -2);
+        bodyLp.setMargins(0, dp(8), 0, 0);
+        section.addView(body, bodyLp);
+    }
+
+    private void addOpenSourceSection(LinearLayout root, boolean compactTopMargin) {
+        LinearLayout section = card(Color.WHITE);
+        LinearLayout.LayoutParams sectionLp = new LinearLayout.LayoutParams(-1, -2);
+        sectionLp.setMargins(0, compactTopMargin ? dp(10) : dp(14), 0, 0);
+        root.addView(section, sectionLp);
+
+        TextView title = new TextView(this);
+        title.setText("\u5f00\u6e90\u4fe1\u606f");
+        title.setTextSize(16f);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setTextColor(0xFF111827);
+        section.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView homepage = new TextView(this);
+        homepage.setText("\u5b98\u7f51\n" + HOMEPAGE_URL);
+        homepage.setTextSize(13f);
+        homepage.setTextColor(0xFF334155);
+        homepage.setLineSpacing(dp(2), 1.0f);
+        homepage.setTextIsSelectable(true);
+        LinearLayout.LayoutParams homepageLp = new LinearLayout.LayoutParams(-1, -2);
+        homepageLp.setMargins(0, dp(8), 0, 0);
+        section.addView(homepage, homepageLp);
+
+        TextView repo = new TextView(this);
+        repo.setText("\u5f00\u6e90\u5730\u5740\n" + REPOSITORY_URL);
+        repo.setTextSize(13f);
+        repo.setTextColor(0xFF334155);
+        repo.setLineSpacing(dp(2), 1.0f);
+        repo.setTextIsSelectable(true);
+        LinearLayout.LayoutParams repoLp = new LinearLayout.LayoutParams(-1, -2);
+        repoLp.setMargins(0, dp(8), 0, 0);
+        section.addView(repo, repoLp);
+
+        TextView license = new TextView(this);
+        license.setText("\u5f00\u6e90\u8bb8\u53ef\u8bc1\nGNU GPL v3.0\n\u672c\u9879\u76ee\u6309 GPL v3.0 \u5f00\u6e90\u53d1\u5e03\uff0c\u53ef\u4ee5\u4f7f\u7528\u3001\u4fee\u6539\u548c\u5206\u53d1\uff0c\u4f46\u5206\u53d1\u4fee\u6539\u7248\u65f6\u9700\u7ee7\u7eed\u4ee5\u76f8\u540c\u8bb8\u53ef\u8bc1\u5f00\u6e90\uff0c\u5e76\u9644\u4e0a\u539f\u59cb\u8bb8\u53ef\u8bc1\u6587\u672c\u3002");
+        license.setTextSize(13f);
+        license.setTextColor(0xFF334155);
+        license.setLineSpacing(dp(2), 1.0f);
+        LinearLayout.LayoutParams licenseLp = new LinearLayout.LayoutParams(-1, -2);
+        licenseLp.setMargins(0, dp(10), 0, 0);
+        section.addView(license, licenseLp);
+
+        TextView customMap = new TextView(this);
+        customMap.setText("\u5de1\u822a\u7ea2\u7eff\u706f\u5b9a\u5236\u5730\u56fe\n\u5de1\u822a\u5de6\u8f6c/\u76f4\u884c\u591a\u65b9\u5411\u5012\u8ba1\u65f6\u9700\u914d\u5408\u5b9a\u5236\u9ad8\u5fb7\u5730\u56fe\uff1a\nGitHub: " + CUSTOM_MAP_SKILL_URL + "\n\u955c\u50cf ZIP: " + CUSTOM_MAP_SKILL_MIRROR_URL);
+        customMap.setTextSize(13f);
+        customMap.setTextColor(0xFF334155);
+        customMap.setLineSpacing(dp(2), 1.0f);
+        customMap.setTextIsSelectable(true);
+        LinearLayout.LayoutParams customMapLp = new LinearLayout.LayoutParams(-1, -2);
+        customMapLp.setMargins(0, dp(10), 0, 0);
+        section.addView(customMap, customMapLp);
+
+        if (isWideLayout()) {
+            addButtonPair(section,
+                    button("\u8bbf\u95ee\u5b98\u7f51", v -> openUrl(HOMEPAGE_URL), 0xFF2563EB),
+                    button("\u6253\u5f00\u5f00\u6e90\u4ed3\u5e93", v -> openUrl(REPOSITORY_URL), 0xFF1D4ED8));
+            addButtonPair(section,
+                    button("\u5b9a\u5236\u5730\u56fe Skill", v -> chooseDownloadSource("\u5b9a\u5236\u5730\u56fe Skill", CUSTOM_MAP_SKILL_URL, CUSTOM_MAP_SKILL_MIRROR_URL), 0xFF0F766E),
+                    button("\u4e0b\u8f7d\u5df2\u6539\u9ad8\u5fb7", v -> chooseDownloadSource("\u4e0b\u8f7d\u5df2\u6539\u9ad8\u5fb7", CUSTOM_MAP_APK_URL, CUSTOM_MAP_APK_MIRROR_URL), 0xFFB45309));
+        } else {
+            section.addView(button("\u8bbf\u95ee\u5b98\u7f51", v -> openUrl(HOMEPAGE_URL), 0xFF2563EB));
+            section.addView(button("\u6253\u5f00\u5f00\u6e90\u4ed3\u5e93", v -> openUrl(REPOSITORY_URL), 0xFF1D4ED8));
+            section.addView(button("\u67e5\u770b\u8bb8\u53ef\u8bc1", v -> openUrl(LICENSE_URL), 0xFF475569));
+            section.addView(button("\u5b9a\u5236\u5730\u56fe Skill", v -> chooseDownloadSource("\u5b9a\u5236\u5730\u56fe Skill", CUSTOM_MAP_SKILL_URL, CUSTOM_MAP_SKILL_MIRROR_URL), 0xFF0F766E));
+            section.addView(button("\u4e0b\u8f7d\u5df2\u6539\u9ad8\u5fb7", v -> chooseDownloadSource("\u4e0b\u8f7d\u5df2\u6539\u9ad8\u5fb7", CUSTOM_MAP_APK_URL, CUSTOM_MAP_APK_MIRROR_URL), 0xFFB45309));
+        }
     }
 
     private void addOverlayScaleControls(LinearLayout parent) {
@@ -953,6 +1072,7 @@ public class MainActivity extends Activity {
                 .create();
         listView.setOnItemClickListener((parent, view, which, id) -> {
             saveTargetPackage(choices.get(which).packageName);
+            updateTargetText();
             startOverlayService();
             dialog.dismiss();
         });
@@ -1434,6 +1554,81 @@ public class MainActivity extends Activity {
                 .show();
     }
 
+    private void chooseUpdateChannel() {
+        String[] labels = {
+                "\u670d\u52a1\u5668\u5206\u53d1\uff08\u63a8\u8350\uff09\n" + SERVER_UPDATE_URL,
+                "GitHub \u76f4\u8fde\n" + GITHUB_UPDATE_URL
+        };
+        int checked = UPDATE_CHANNEL_GITHUB.equals(getUpdateChannel()) ? 1 : 0;
+        new AlertDialog.Builder(this)
+                .setTitle("\u9009\u62e9\u4e0b\u8f7d\u6e20\u9053")
+                .setSingleChoiceItems(labels, checked, (dialog, which) -> {
+                    saveUpdateChannel(which == 1 ? UPDATE_CHANNEL_GITHUB : UPDATE_CHANNEL_SERVER);
+                    updateUpdateText("\u66f4\u65b0\u6e20\u9053\n" + displayUpdateUrl());
+                    dialog.dismiss();
+                })
+                .setNegativeButton("\u53d6\u6d88", null)
+                .show();
+    }
+
+    private void updateTargetText() {
+        if (targetText != null) {
+            targetText.setText("\u76ee\u6807\u5e94\u7528\n" + getTargetPackage(this));
+        }
+    }
+
+    private void checkForUpdates(boolean manual) {
+        String url = getUpdateUrl();
+        if (TextUtils.isEmpty(url)) {
+            if (manual) {
+                Toast.makeText(this, "\u66f4\u65b0\u5730\u5740\u672a\u914d\u7f6e", Toast.LENGTH_SHORT).show();
+            }
+            return;
+        }
+        updateUpdateText("\u6b63\u5728\u68c0\u67e5\u66f4\u65b0...\n" + url);
+        new Thread(() -> {
+            try {
+                Updater.UpdateInfo info = Updater.check(this, url);
+                runOnUiThread(() -> handleUpdateInfo(info, manual));
+            } catch (Throwable t) {
+                runOnUiThread(() -> updateUpdateText("\u66f4\u65b0\u5931\u8d25: " + t.getMessage()));
+            }
+        }).start();
+    }
+
+    private void handleUpdateInfo(Updater.UpdateInfo info, boolean manual) {
+        if (!info.hasUpdate()) {
+            updateUpdateText("\u5df2\u662f\u6700\u65b0\u7248\n" + info.localVersionName + " (" + info.localVersionCode + ")");
+            if (manual) {
+                Toast.makeText(this, "\u5df2\u662f\u6700\u65b0\u7248", Toast.LENGTH_SHORT).show();
+            }
+            return;
+        }
+        updateUpdateText("\u53d1\u73b0\u65b0\u7248\n" + info.remoteVersionName + " (" + info.remoteVersionCode + ")");
+        showUpdateDetail(info);
+    }
+
+    private void showUpdateDetail(Updater.UpdateInfo info) {
+        TextView message = new TextView(this);
+        message.setText(renderMarkdown(info.detailMarkdown()));
+        message.setTextColor(0xFF0F172A);
+        message.setTextSize(14f);
+        message.setLineSpacing(dp(2), 1.0f);
+        message.setTextIsSelectable(true);
+        message.setPadding(dp(22), dp(12), dp(22), dp(8));
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(message, new ScrollView.LayoutParams(-1, -2));
+        scroll.setLayoutParams(new ViewGroup.LayoutParams(-1,
+                Math.min(dp(560), Math.max(dp(320), getResources().getDisplayMetrics().heightPixels * 2 / 3))));
+
+        new AlertDialog.Builder(this)
+                .setTitle("\u53d1\u73b0\u65b0\u7248")
+                .setView(scroll)
+                .setPositiveButton("\u66f4\u65b0", (dialog, which) -> installUpdate(info))
+                .setNegativeButton("\u53d6\u6d88", null)
+                .show();
+    }
 
     private CharSequence renderMarkdown(String markdown) {
         SpannableStringBuilder out = new SpannableStringBuilder();
@@ -1573,6 +1768,14 @@ public class MainActivity extends Activity {
         return UPDATE_CHANNEL_GITHUB.equals(channel) ? GITHUB_UPDATE_URL : SERVER_UPDATE_URL;
     }
 
+    private String displayUpdateUrl() {
+        String url = getUpdateUrl();
+        if (TextUtils.isEmpty(url)) {
+            return "\u672a\u8bbe\u7f6e";
+        }
+        String channelName = UPDATE_CHANNEL_GITHUB.equals(getUpdateChannel()) ? "GitHub \u76f4\u8fde" : "\u670d\u52a1\u5668\u5206\u53d1";
+        return channelName + "\n" + url;
+    }
 
     private void saveOverlayScalePercent(int percent) {
         getSharedPreferences(PREFS, MODE_PRIVATE)
