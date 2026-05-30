@@ -247,7 +247,6 @@ public class MainActivity extends Activity {
         addOverlayTargetControls(settings);
         addOverlayContentControls(settings);
         addBehaviorControls(settings);
-        addOpenSourceSection(wideLayout ? leftColumn : rightColumn, wideLayout);
 
         return scroll;
     }
@@ -304,73 +303,6 @@ public class MainActivity extends Activity {
         section.addView(body, bodyLp);
     }
 
-    private void addOpenSourceSection(LinearLayout root, boolean compactTopMargin) {
-        LinearLayout section = card(Color.WHITE);
-        LinearLayout.LayoutParams sectionLp = new LinearLayout.LayoutParams(-1, -2);
-        sectionLp.setMargins(0, compactTopMargin ? dp(10) : dp(14), 0, 0);
-        root.addView(section, sectionLp);
-
-        TextView title = new TextView(this);
-        title.setText("\u5f00\u6e90\u4fe1\u606f");
-        title.setTextSize(16f);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        title.setTextColor(0xFF111827);
-        section.addView(title, new LinearLayout.LayoutParams(-1, -2));
-
-        TextView homepage = new TextView(this);
-        homepage.setText("\u5b98\u7f51\n" + HOMEPAGE_URL);
-        homepage.setTextSize(13f);
-        homepage.setTextColor(0xFF334155);
-        homepage.setLineSpacing(dp(2), 1.0f);
-        homepage.setTextIsSelectable(true);
-        LinearLayout.LayoutParams homepageLp = new LinearLayout.LayoutParams(-1, -2);
-        homepageLp.setMargins(0, dp(8), 0, 0);
-        section.addView(homepage, homepageLp);
-
-        TextView repo = new TextView(this);
-        repo.setText("\u5f00\u6e90\u5730\u5740\n" + REPOSITORY_URL);
-        repo.setTextSize(13f);
-        repo.setTextColor(0xFF334155);
-        repo.setLineSpacing(dp(2), 1.0f);
-        repo.setTextIsSelectable(true);
-        LinearLayout.LayoutParams repoLp = new LinearLayout.LayoutParams(-1, -2);
-        repoLp.setMargins(0, dp(8), 0, 0);
-        section.addView(repo, repoLp);
-
-        TextView license = new TextView(this);
-        license.setText("\u5f00\u6e90\u8bb8\u53ef\u8bc1\nGNU GPL v3.0\n\u672c\u9879\u76ee\u6309 GPL v3.0 \u5f00\u6e90\u53d1\u5e03\uff0c\u53ef\u4ee5\u4f7f\u7528\u3001\u4fee\u6539\u548c\u5206\u53d1\uff0c\u4f46\u5206\u53d1\u4fee\u6539\u7248\u65f6\u9700\u7ee7\u7eed\u4ee5\u76f8\u540c\u8bb8\u53ef\u8bc1\u5f00\u6e90\uff0c\u5e76\u9644\u4e0a\u539f\u59cb\u8bb8\u53ef\u8bc1\u6587\u672c\u3002");
-        license.setTextSize(13f);
-        license.setTextColor(0xFF334155);
-        license.setLineSpacing(dp(2), 1.0f);
-        LinearLayout.LayoutParams licenseLp = new LinearLayout.LayoutParams(-1, -2);
-        licenseLp.setMargins(0, dp(10), 0, 0);
-        section.addView(license, licenseLp);
-
-        TextView customMap = new TextView(this);
-        customMap.setText("\u5de1\u822a\u7ea2\u7eff\u706f\u5b9a\u5236\u5730\u56fe\n\u5de1\u822a\u5de6\u8f6c/\u76f4\u884c\u591a\u65b9\u5411\u5012\u8ba1\u65f6\u9700\u914d\u5408\u5b9a\u5236\u9ad8\u5fb7\u5730\u56fe\uff1a\nGitHub: " + CUSTOM_MAP_SKILL_URL + "\n\u955c\u50cf ZIP: " + CUSTOM_MAP_SKILL_MIRROR_URL);
-        customMap.setTextSize(13f);
-        customMap.setTextColor(0xFF334155);
-        customMap.setLineSpacing(dp(2), 1.0f);
-        customMap.setTextIsSelectable(true);
-        LinearLayout.LayoutParams customMapLp = new LinearLayout.LayoutParams(-1, -2);
-        customMapLp.setMargins(0, dp(10), 0, 0);
-        section.addView(customMap, customMapLp);
-
-        if (isWideLayout()) {
-            addButtonPair(section,
-                    button("\u8bbf\u95ee\u5b98\u7f51", v -> openUrl(HOMEPAGE_URL), 0xFF2563EB),
-                    button("\u6253\u5f00\u5f00\u6e90\u4ed3\u5e93", v -> openUrl(REPOSITORY_URL), 0xFF1D4ED8));
-            addButtonPair(section,
-                    button("\u5b9a\u5236\u5730\u56fe Skill", v -> chooseDownloadSource("\u5b9a\u5236\u5730\u56fe Skill", CUSTOM_MAP_SKILL_URL, CUSTOM_MAP_SKILL_MIRROR_URL), 0xFF0F766E),
-                    button("\u4e0b\u8f7d\u5df2\u6539\u9ad8\u5fb7", v -> chooseDownloadSource("\u4e0b\u8f7d\u5df2\u6539\u9ad8\u5fb7", CUSTOM_MAP_APK_URL, CUSTOM_MAP_APK_MIRROR_URL), 0xFFB45309));
-        } else {
-            section.addView(button("\u8bbf\u95ee\u5b98\u7f51", v -> openUrl(HOMEPAGE_URL), 0xFF2563EB));
-            section.addView(button("\u6253\u5f00\u5f00\u6e90\u4ed3\u5e93", v -> openUrl(REPOSITORY_URL), 0xFF1D4ED8));
-            section.addView(button("\u67e5\u770b\u8bb8\u53ef\u8bc1", v -> openUrl(LICENSE_URL), 0xFF475569));
-            section.addView(button("\u5b9a\u5236\u5730\u56fe Skill", v -> chooseDownloadSource("\u5b9a\u5236\u5730\u56fe Skill", CUSTOM_MAP_SKILL_URL, CUSTOM_MAP_SKILL_MIRROR_URL), 0xFF0F766E));
-            section.addView(button("\u4e0b\u8f7d\u5df2\u6539\u9ad8\u5fb7", v -> chooseDownloadSource("\u4e0b\u8f7d\u5df2\u6539\u9ad8\u5fb7", CUSTOM_MAP_APK_URL, CUSTOM_MAP_APK_MIRROR_URL), 0xFFB45309));
-        }
-    }
 
     private void addOverlayScaleControls(LinearLayout parent) {
         LinearLayout box = new LinearLayout(this);
