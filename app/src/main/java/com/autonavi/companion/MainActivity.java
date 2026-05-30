@@ -184,7 +184,7 @@ public class MainActivity extends Activity {
         root.addView(hero, new LinearLayout.LayoutParams(-1, -2));
 
         TextView title = new TextView(this);
-        title.setText("AMap Companion");
+        title.setText("AMap");
         title.setTextSize(28f);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         title.setTextColor(Color.WHITE);
@@ -206,7 +206,6 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams updateLp = new LinearLayout.LayoutParams(-1, -2);
         updateLp.setMargins(0, dp(8), 0, 0);
         hero.addView(updateText, updateLp);
-        updateUpdateText("\u66f4\u65b0\u6e20\u9053\n" + displayUpdateUrl());
 
         LinearLayout contentArea = new LinearLayout(this);
         contentArea.setOrientation(wideLayout ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
@@ -1437,98 +1436,6 @@ public class MainActivity extends Activity {
         Toast.makeText(this, "\u65e5\u5fd7\u5df2\u590d\u5236", Toast.LENGTH_SHORT).show();
     }
 
-    private void chooseDownloadSource(String title, String githubUrl, String mirrorUrl) {
-        String[] labels = {
-                "\u955c\u50cf\u7ad9\uff08\u4e0b\u8f7d ZIP\uff0c\u5feb\uff09\n" + mirrorUrl,
-                "GitHub \u539f\u7ad9\uff08\u53ef\u80fd\u8f83\u6162\uff09\n" + githubUrl
-        };
-        new AlertDialog.Builder(this)
-                .setTitle(title)
-                .setItems(labels, (dialog, which) -> {
-                    if (which == 0) {
-                        openUrl(mirrorUrl);
-                    } else {
-                        openUrl(githubUrl);
-                    }
-                })
-                .show();
-    }
-
-    private void chooseUpdateChannel() {
-        String[] labels = {
-                "\u670d\u52a1\u5668\u5206\u53d1\uff08\u63a8\u8350\uff09\n" + SERVER_UPDATE_URL,
-                "GitHub \u76f4\u8fde\n" + GITHUB_UPDATE_URL
-        };
-        int checked = UPDATE_CHANNEL_GITHUB.equals(getUpdateChannel()) ? 1 : 0;
-        new AlertDialog.Builder(this)
-                .setTitle("\u9009\u62e9\u4e0b\u8f7d\u6e20\u9053")
-                .setSingleChoiceItems(labels, checked, (dialog, which) -> {
-                    saveUpdateChannel(which == 1 ? UPDATE_CHANNEL_GITHUB : UPDATE_CHANNEL_SERVER);
-                    updateUpdateText("\u66f4\u65b0\u6e20\u9053\n" + displayUpdateUrl());
-                    dialog.dismiss();
-                })
-                .setNegativeButton("\u53d6\u6d88", null)
-                .show();
-    }
-
-    private void updateTargetText() {
-        if (targetText != null) {
-            targetText.setText("\u76ee\u6807\u5e94\u7528\n" + getTargetPackage(this));
-        }
-    }
-
-    private void checkForUpdates(boolean manual) {
-        String url = getUpdateUrl();
-        if (TextUtils.isEmpty(url)) {
-            if (manual) {
-                Toast.makeText(this, "\u66f4\u65b0\u5730\u5740\u672a\u914d\u7f6e", Toast.LENGTH_SHORT).show();
-            }
-            return;
-        }
-        updateUpdateText("\u6b63\u5728\u68c0\u67e5\u66f4\u65b0...\n" + url);
-        new Thread(() -> {
-            try {
-                Updater.UpdateInfo info = Updater.check(this, url);
-                runOnUiThread(() -> handleUpdateInfo(info, manual));
-            } catch (Throwable t) {
-                runOnUiThread(() -> updateUpdateText("\u66f4\u65b0\u5931\u8d25: " + t.getMessage()));
-            }
-        }).start();
-    }
-
-    private void handleUpdateInfo(Updater.UpdateInfo info, boolean manual) {
-        if (!info.hasUpdate()) {
-            updateUpdateText("\u5df2\u662f\u6700\u65b0\u7248\n" + info.localVersionName + " (" + info.localVersionCode + ")");
-            if (manual) {
-                Toast.makeText(this, "\u5df2\u662f\u6700\u65b0\u7248", Toast.LENGTH_SHORT).show();
-            }
-            return;
-        }
-        updateUpdateText("\u53d1\u73b0\u65b0\u7248\n" + info.remoteVersionName + " (" + info.remoteVersionCode + ")");
-        showUpdateDetail(info);
-    }
-
-    private void showUpdateDetail(Updater.UpdateInfo info) {
-        TextView message = new TextView(this);
-        message.setText(renderMarkdown(info.detailMarkdown()));
-        message.setTextColor(0xFF0F172A);
-        message.setTextSize(14f);
-        message.setLineSpacing(dp(2), 1.0f);
-        message.setTextIsSelectable(true);
-        message.setPadding(dp(22), dp(12), dp(22), dp(8));
-
-        ScrollView scroll = new ScrollView(this);
-        scroll.addView(message, new ScrollView.LayoutParams(-1, -2));
-        scroll.setLayoutParams(new ViewGroup.LayoutParams(-1,
-                Math.min(dp(560), Math.max(dp(320), getResources().getDisplayMetrics().heightPixels * 2 / 3))));
-
-        new AlertDialog.Builder(this)
-                .setTitle("\u53d1\u73b0\u65b0\u7248")
-                .setView(scroll)
-                .setPositiveButton("\u66f4\u65b0", (dialog, which) -> installUpdate(info))
-                .setNegativeButton("\u53d6\u6d88", null)
-                .show();
-    }
 
     private CharSequence renderMarkdown(String markdown) {
         SpannableStringBuilder out = new SpannableStringBuilder();
@@ -1668,14 +1575,6 @@ public class MainActivity extends Activity {
         return UPDATE_CHANNEL_GITHUB.equals(channel) ? GITHUB_UPDATE_URL : SERVER_UPDATE_URL;
     }
 
-    private String displayUpdateUrl() {
-        String url = getUpdateUrl();
-        if (TextUtils.isEmpty(url)) {
-            return "\u672a\u8bbe\u7f6e";
-        }
-        String channelName = UPDATE_CHANNEL_GITHUB.equals(getUpdateChannel()) ? "GitHub \u76f4\u8fde" : "\u670d\u52a1\u5668\u5206\u53d1";
-        return channelName + "\n" + url;
-    }
 
     private void saveOverlayScalePercent(int percent) {
         getSharedPreferences(PREFS, MODE_PRIVATE)
